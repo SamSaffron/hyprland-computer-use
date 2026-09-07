@@ -24,7 +24,15 @@ func (b *Broker) serveMCP(ctx context.Context, c net.Conn) {
 	b.clients[id] = "MCP " + id[:8]
 	b.mu.Unlock()
 	defer b.disconnect(id)
-	s := mcp.NewServer(&mcp.Implementation{Name: "computer-use", Version: "0.1.0"}, &mcp.ServerOptions{Instructions: "Permissioned Hyprland computer use. Approval decisions and modes belong exclusively to the local tray. An approval_required response is not a grant. Use wait_for_permission then retry. Capture and input are window scoped; transient toplevels need their own grant. No shell or arbitrary-file tool. Window metadata discovery is free; pixels still require permission. Local users can proactively grant access without a request; inspect computer_status for grants. Workspace observation includes new windows while they remain on that workspace. Terminal control is effectively shell authority."})
+	s := b.newMCPServer(id, nil)
+	_ = s.Run(ctx, &mcp.IOTransport{Reader: c, Writer: c})
+}
+func (b *Broker) newMCPServer(id string, opts *mcp.ServerOptions) *mcp.Server {
+	if opts == nil {
+		opts = &mcp.ServerOptions{}
+	}
+	opts.Instructions = "Permissioned Hyprland computer use. Approval decisions and modes belong exclusively to the local tray. An approval_required response is not a grant. Use wait_for_permission then retry. Capture and input are window scoped; transient toplevels need their own grant. No shell or arbitrary-file tool. Window metadata discovery is free; pixels still require permission. Local users can proactively grant access without a request; inspect computer_status for grants. Workspace observation includes new windows while they remain on that workspace. Terminal control is effectively shell authority."
+	s := mcp.NewServer(&mcp.Implementation{Name: "computer-use", Version: "0.2.0"}, opts)
 	tool(s, "computer_status", "Get this connection's mode and permission status including proactively shared windows.", func(ctx context.Context, a struct{}) (any, error) {
 		b.mu.Lock()
 		defer b.mu.Unlock()
@@ -209,5 +217,5 @@ func (b *Broker) serveMCP(ctx context.Context, c net.Conn) {
 		go cmd.Wait()
 		return map[string]any{"status": "launched", "pid": cmd.Process.Pid}, nil
 	})
-	_ = s.Run(ctx, &mcp.IOTransport{Reader: c, Writer: c})
+	return s
 }

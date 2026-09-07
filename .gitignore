@@ -3,3 +3,9 @@ evidence/
 *.log
 *.mp4
 *.png
+
+# Local TLS and OAuth state must never be committed.
+*.pem
+*.key
+oauth-clients.json
+.oauth-clients-*

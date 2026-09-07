@@ -78,6 +78,25 @@ Example input after a control grant:
 
 Coordinates are **window-local logical pixels**, not scaled screenshot pixels. Read the `logical_size` and revision returned by `view_window`. The client must update its coordinates after geometry changes. A revision protects against compositor geometry changes, **not arbitrary in-app content changes**.
 
+## Optional HTTP / built-in OAuth
+
+Local stdio remains the default—no OAuth setup and no network listener. HTTP and the built-in provider are **opt-in modes**:
+
+```sh
+# Local stdio (unchanged)
+computer-use serve
+
+# Loopback-only HTTP, no OAuth
+computer-use serve --http 127.0.0.1:8099
+
+# OAuth behind your HTTPS reverse proxy; no external identity provider
+computer-use serve --http 127.0.0.1:8099 --oauth --public-url https://desktop.example.com
+```
+
+OAuth clients discover the provider, dynamically register, and use authorization code + PKCE S256. The desktop user approves the connection in Quickshell. **Authentication allows MCP access, not window viewing/control.** Free metadata is available only after connection authentication when OAuth is enabled. The provider supports public/confidential clients and rotating refresh tokens, bounded by the one-hour locally approved connection lifetime.
+
+See [AUTH.md](AUTH.md) for direct TLS, endpoints, persistence, revocation, compatibility and limits. No auth is bolted onto the stdio bridge.
+
 ## Proactively share a window
 
 The local user can grant **viewing + control for five minutes**, without an agent asking first:

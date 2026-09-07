@@ -12,7 +12,7 @@ This is evidence from one disposable configuration, not a general security audit
 
 ## Automated and live checks
 
-`go test -race ./...`: **23 top-level tests passed** (including proactive-sharing subcases). `go vet ./...`: passed. Native plugin/helper compilation: passed.
+`go test -race ./...`: **35 top-level tests passed** (including proactive-sharing subcases). `go vet ./...`: passed. Native plugin/helper compilation: passed.
 
 The opt-in `scripts/live-test.py` passed **15 checks** against the actual MCP transport and compositor:
 
@@ -49,3 +49,13 @@ Physical-desktop device arbitration, mixed DPI/multiple monitors/seats, all lock
 Waybar0.15.0 and JetBrains Mono Nerd Font were installed in the disposable lab. `scripts/live-sharing-test.py` passed **15 additional live checks** using real stdio MCP plus simulated-human pointer/keyboard input: no-request CLI sharing, actual window click, pixel/input access, separate recording gate, cross-window denial, revoke, Escape cancellation, actual Super+Ctrl+S, Waybar Share button, view-only mode, explicit multi-client selection including the real dropdown, recipient isolation/expiry, disconnect/reconnect, paused metadata discovery, and tray activation. Some assertions are grouped into one check.
 
 The lab-only wtype device uses `resolve_binds_by_sym=true` because wtype supplies a custom keymap; this is not a requirement for an ordinary physical keyboard. The picker/target overlays explicitly ignore Waybar's reserved zone so their coordinates stay aligned. The console uses on-demand keyboard focus rather than an exclusive grab. Final lab state: paused, no grants, test clients disconnected.
+
+## Optional built-in OAuth — 8 September
+
+Automated coverage includes resource/issuer discovery and 401 challenges, public and confidential DCR, exact callback checks, PKCE downgrade/mismatch, resource mismatch, one-use codes, browser-cookie binding and denial, registry persistence without plaintext client secrets, Host/Origin rejection, refresh rotation/replay revocation/consent lifetime, expiry, cross-token session hijacking, OAuth revocation clearing desktop grants, HTTP with OAuth disabled, and the **official Go SDK OAuth-capable MCP client** completing discovery → DCR → authorization → token exchange → tool calls over verified TLS.
+
+The same official client was then run against the actual lab broker's **loopback HTTPS listener**, using the lab certificate as an explicitly trusted CA (no certificate-verification bypass). Real Quickshell clicks approved its OAuth connection, then proactively shared Kitty. Window metadata was free after authentication, pixel capture still required a local desktop grant, and `input_window` executed `echo OAUTH_MCP_CONTROL_OK`. Clicking **Revoke connection** made the prior bearer token return **401**. A layout change caused an initial click to select Pinta; that grant was revoked before selecting the correctly labelled Kitty target. This was a test-harness targeting correction, not silently reassigned authority.
+
+The SDK makes an initialize probe during OAuth retry; initialize-only sessions are not offered as sharing recipients. A real recipient becomes visible when it starts tool discovery/use. Disconnect tests check the actual client session, not leftover initialization probes.
+
+OAuth refresh rotation is additionally verified in automated public/confidential-client tests; the live UI run used the authorization-code flow. No independent OAuth security certification is claimed. See [AUTH.md](AUTH.md) for unsupported CIMD and deployment constraints.

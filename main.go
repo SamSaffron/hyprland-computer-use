@@ -100,6 +100,11 @@ func run() error {
 		return e
 	case "serve":
 		f := flag.NewFlagSet("serve", flag.ContinueOnError)
+		httpAddr := f.String("http", "", "optional Streamable HTTP listen address, e.g. 127.0.0.1:8099")
+		publicURL := f.String("public-url", "", "HTTP public origin; HTTPS required for OAuth")
+		oauth := f.Bool("oauth", false, "enable built-in OAuth provider with local desktop approval (requires --http)")
+		cert := f.String("tls-cert", "", "PEM certificate for direct HTTPS")
+		key := f.String("tls-key", "", "PEM private key for direct HTTPS")
 		exe, _ := os.Executable()
 		keyboard := f.String("keyboard", filepath.Join(filepath.Dir(exe), "computer-use-keyboard"), "persistent US-layout keyboard helper")
 		stateHome := os.Getenv("XDG_STATE_HOME")
@@ -110,6 +115,14 @@ func run() error {
 		data := f.String("data", filepath.Join(stateHome, "computer-use"), "private recordings and audit directory")
 		if e = f.Parse(os.Args[2:]); e != nil {
 			return e
+		}
+		if *httpAddr == "" && (*oauth || *publicURL != "" || *cert != "" || *key != "") {
+			return errors.New("HTTP/OAuth options require --http")
+		}
+		if *httpAddr != "" {
+			if _, e = httpOrigin(*httpAddr, *publicURL, *oauth, *cert, *key); e != nil {
+				return e
+			}
 		}
 		if e = os.MkdirAll(*data, 0700); e != nil {
 			return e
@@ -151,6 +164,14 @@ func run() error {
 		}
 		defer b.log.Close()
 		defer func() { b.mu.Lock(); b.clearLocked(); b.mu.Unlock() }()
+		if *httpAddr != "" {
+			server, err := startHTTP(ctx, b, *httpAddr, *publicURL, *oauth, *cert, *key, *data)
+			if err != nil {
+				return err
+			}
+			defer server.Close()
+			fmt.Fprintln(os.Stderr, "HTTP MCP:", *httpAddr, "OAuth:", *oauth)
+		}
 		go b.maintenance(ctx)
 		go b.runTray(ctx)
 		go func() {
@@ -180,6 +201,9 @@ func run() error {
 }
 func main() {
 	if e := run(); e != nil {
+		if errors.Is(e, flag.ErrHelp) {
+			return
+		}
 		fmt.Fprintln(os.Stderr, e)
 		os.Exit(1)
 	}

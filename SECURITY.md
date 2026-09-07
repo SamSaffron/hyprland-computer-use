@@ -2,13 +2,13 @@
 
 This is a tested prototype, **not a security-audited product**. The intended untrusted party is a client that has only the exposed MCP tools. The desktop user, broker, Quickshell console, compositor, plugins, and other processes with equivalent local authority are trusted.
 
-Window metadata (titles, IDs, app, workspace, geometry) is intentionally available without a desktop grant, including while paused. This can reveal sensitive document names. Pixels, input, recording and application launch retain their permission gates.
+Window metadata (titles, IDs, app, workspace, geometry) is intentionally available without a desktop grant, including while paused. In OAuth mode this still requires a valid connection access token. This can reveal sensitive document names. Pixels, input, recording and application launch retain their permission gates.
 
 Local proactive sharing is exposed only through the UI socket/CLI, not MCP. A click binds a timed grant to one existing MCP connection and one snapshot-validated native window. Multiple clients require a recipient choice; no future-client or broadcast grants.
 
 ## Enforced paths
 
-- The production MCP transport is a private Unix socket, reached through a stdio bridge. It exposes no approve/mode/shell/arbitrary-path tool.
+- The default MCP transport is a private Unix socket, reached through a stdio bridge. Optional Streamable HTTP can use the built-in OAuth provider; see [AUTH.md](AUTH.md). It exposes no approve/mode/shell/arbitrary-path tool.
 - A separate private UI socket receives local decisions. Quickshell must maintain its connection/heartbeat; losing the final supervisor pauses the broker and clears grants.
 - Grants belong to an MCP connection, have a specific capability/scope, and expire using the server's in-process clock. Disconnect revokes that connection's grants and stops its recordings.
 - Window control adds a compositor lease bound to the live window **object and root surface**, not just its title or PID. The plugin checks time, visibility, session-lock state, geometry and pointer bounds at delivery. It checks that the seat accepted the target focus before sending events.
@@ -33,3 +33,9 @@ Local proactive sharing is exposed only through the UI socket/CLI, not MCP. A cl
 Do not add a fallback from toplevel capture to desktop cropping, or from guard input to `wtype`/`ydotool`/virtual-pointer global injection. Do not expose the local UI command channel as an MCP tool. Do not persist grants across broker/compositor restarts. Do not treat a UI outline as proof that a backend check ran.
 
 For testing, a separate local harness may simulate human approval. That authority must stay outside the MCP client and be clearly labelled in recordings and reports.
+
+## Optional OAuth boundary
+
+Built-in OAuth is opt-in and authenticates HTTP MCP connections only. There is no remote approval endpoint, no token passthrough and no MCP tool that changes OAuth decisions. Local OAuth revocation also terminates that authorization grant's MCP sessions and desktop grants/recordings. Cookie-bound authorization continuation, exact redirect checks, S256 PKCE, resource validation, token-family refresh rotation/replay revocation, expiry and session ownership are covered by tests. Registered client names are untrusted labels; the UI displays callback addresses and the loopback impersonation caveat.
+
+Client registrations persist privately with hashed secrets; tokens/consent are volatile. The provider does not fetch arbitrary client metadata URLs (CIMD is unsupported). Connection/registration/request limits are not a substitute for a hostile-network audit or deployment-level rate limiting. No public-internet deployment was made for the lab test.

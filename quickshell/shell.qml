@@ -148,6 +148,20 @@ ShellRoot {
                 Text { visible:root.lastError!=="";Layout.fillWidth:true;wrapMode:Text.WordWrap;text:root.lastError;textFormat:Text.PlainText;color:"#ffae93";font.pixelSize:12 }
                 ScrollView { id: scroller; Layout.fillWidth:true;Layout.fillHeight:true;clip:true;contentWidth:availableWidth
                     Column { width:scroller.availableWidth;spacing:12
+                        Text { visible:(root.state.oauth_pending||[]).length>0;text:"OAUTH CONNECTION REQUESTS";color:"#89b4fa";font.pixelSize:11;font.bold:true }
+                        Repeater { model:root.state.oauth_pending||[]
+                            Rectangle { required property var modelData;width:parent.width;implicitHeight:oauthRequest.implicitHeight+24;radius:10;color:"#253044";border.color:"#89b4fa"
+                                Column { id:oauthRequest;anchors.left:parent.left;anchors.right:parent.right;anchors.top:parent.top;anchors.margins:12;spacing:8
+                                    Text { width:parent.width;text:"Unverified app: "+modelData.name;textFormat:Text.PlainText;wrapMode:Text.WrapAnywhere;color:root.ink;font.pixelSize:14;font.bold:true }
+                                    Text { width:parent.width;text:"Redirect: "+modelData.redirect_uri;textFormat:Text.PlainText;wrapMode:Text.WrapAnywhere;color:root.muted;font.pixelSize:11 }
+                                    Text { width:parent.width;text:"Allow MCP connection for 1 hour. Window names become visible; pixels, input and recording still need separate grants. Loopback callbacks do not prove the app's identity.";wrapMode:Text.WordWrap;color:root.ink;font.pixelSize:12 }
+                                    Row { spacing:8
+                                        ActionButton { label:"Allow connection";tint:"#28654f";onClicked:root.send("oauth_approve",{id:modelData.id}) }
+                                        ActionButton { label:"Deny";onClicked:root.send("oauth_deny",{id:modelData.id}) }
+                                    }
+                                }
+                            }
+                        }
                         Text { text:"REQUESTS  ·  "+root.state.requests.length;color:root.accent;font.pixelSize:11;font.bold:true;font.letterSpacing:1 }
                         Text { visible:root.state.requests.length===0;text:"No requests waiting";color:root.muted;font.pixelSize:13 }
                         Repeater { model:root.state.requests
@@ -175,13 +189,22 @@ ShellRoot {
                                 }
                             }
                         }
+                        Text { visible:(root.state.oauth_connections||[]).length>0;text:"OAUTH CONNECTIONS";color:"#89b4fa";font.pixelSize:11;font.bold:true }
+                        Repeater { model:root.state.oauth_connections||[]
+                            Rectangle { required property var modelData;width:parent.width;implicitHeight:oauthConnection.implicitHeight+22;radius:10;color:"#253044"
+                                Column { id:oauthConnection;anchors.left:parent.left;anchors.right:parent.right;anchors.top:parent.top;anchors.margins:11;spacing:8
+                                    Text { width:parent.width;text:modelData.name+" · expires "+new Date(modelData.expires).toLocaleTimeString();textFormat:Text.PlainText;wrapMode:Text.WordWrap;color:root.ink;font.pixelSize:12 }
+                                    ActionButton { label:"Revoke connection";tint:"#693d36";onClicked:root.send("oauth_revoke",{id:modelData.id}) }
+                                }
+                            }
+                        }
                         Text { text:"RECENT ACTIVITY";color:root.muted;font.pixelSize:11;font.bold:true;font.letterSpacing:1 }
                         Repeater { model:root.state.audit.slice(-5).reverse()
                             Text { required property var modelData;width:parent.width;text:modelData.event+" · "+modelData.detail;textFormat:Text.PlainText;wrapMode:Text.WordWrap;color:"#a3b6c0";font.pixelSize:11 }
                         }
                     }
                 }
-                ActionButton { Layout.fillWidth:true;label:"Revoke all access";tint:"#693d36";onClicked:root.send("revoke_all") }
+                ActionButton { Layout.fillWidth:true;label:"Revoke desktop grants";tint:"#693d36";onClicked:root.send("revoke_all") }
                 Text { Layout.fillWidth:true;wrapMode:Text.WordWrap;text:"Window-scoped input requires the compositor guard. Same-user shell access is outside this permission boundary.";color:"#78909f";font.pixelSize:10 }
             }
         }

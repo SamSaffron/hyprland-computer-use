@@ -51,22 +51,26 @@ type Marker struct {
 	Label     string `json:"label"`
 }
 type UIState struct {
-	Clients    []UIClient      `json:"clients"`
-	Picker     *SharePicker    `json:"picker,omitempty"`
-	Targets    []Marker        `json:"targets"`
-	Mode       string          `json:"mode"`
-	Paused     bool            `json:"paused"`
-	Connected  bool            `json:"connected"`
-	Requests   []Request       `json:"requests"`
-	Grants     []Grant         `json:"grants"`
-	Audit      []Audit         `json:"audit"`
-	Recordings []RecordingInfo `json:"recordings"`
-	Open       uint64          `json:"open"`
-	Backend    string          `json:"backend"`
-	Now        time.Time       `json:"now"`
-	Error      string          `json:"error,omitempty"`
+	OAuthEnabled     bool              `json:"oauth_enabled"`
+	OAuthPending     []OAuthPending    `json:"oauth_pending"`
+	OAuthConnections []OAuthConnection `json:"oauth_connections"`
+	Clients          []UIClient        `json:"clients"`
+	Picker           *SharePicker      `json:"picker,omitempty"`
+	Targets          []Marker          `json:"targets"`
+	Mode             string            `json:"mode"`
+	Paused           bool              `json:"paused"`
+	Connected        bool              `json:"connected"`
+	Requests         []Request         `json:"requests"`
+	Grants           []Grant           `json:"grants"`
+	Audit            []Audit           `json:"audit"`
+	Recordings       []RecordingInfo   `json:"recordings"`
+	Open             uint64            `json:"open"`
+	Backend          string            `json:"backend"`
+	Now              time.Time         `json:"now"`
+	Error            string            `json:"error,omitempty"`
 }
 type Broker struct {
+	oauth           *OAuthProvider
 	picker          *SharePicker
 	mu              sync.Mutex
 	lastInputWindow string
@@ -310,8 +314,15 @@ func (b *Broker) state(err string) UIState {
 	for _, r := range b.recordings {
 		s.Recordings = append(s.Recordings, r.Info)
 	}
+	oauth := b.oauth
 	lastWindow, lastUntil := b.lastInputWindow, b.lastInputUntil
 	b.mu.Unlock()
+	s.OAuthPending = []OAuthPending{}
+	s.OAuthConnections = []OAuthConnection{}
+	if oauth != nil {
+		s.OAuthEnabled = true
+		s.OAuthPending, s.OAuthConnections = oauth.state()
+	}
 	sort.Slice(s.Requests, func(i, j int) bool { return s.Requests[i].Created.Before(s.Requests[j].Created) })
 	sort.Slice(s.Grants, func(i, j int) bool { return s.Grants[i].Expires.Before(s.Grants[j].Expires) })
 	s.Targets = []Marker{}
@@ -404,6 +415,17 @@ func (b *Broker) handleUI(conn net.Conn) {
 		if e == nil {
 			switch q.Op {
 			case "state":
+			case "oauth_approve", "oauth_deny", "oauth_revoke":
+				b.mu.Lock()
+				p := b.oauth
+				b.mu.Unlock()
+				if p == nil {
+					e = errors.New("OAuth provider is not enabled")
+				} else if q.Op == "oauth_revoke" {
+					p.revokeConnection(q.ID)
+				} else {
+					e = p.decide(q.ID, q.Op == "oauth_approve")
+				}
 			case "begin_share":
 				e = b.beginShare(q.Client, q.Capability, q.Seconds)
 			case "select_share":
