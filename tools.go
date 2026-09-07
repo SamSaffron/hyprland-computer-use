@@ -1,0 +1,219 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net"
+	"net/url"
+	"os/exec"
+	"strconv"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+func tool[In any](s *mcp.Server, name, description string, f func(context.Context, In) (any, error)) {
+	mcp.AddTool(s, &mcp.Tool{Name: name, Description: description}, func(ctx context.Context, _ *mcp.CallToolRequest, a In) (*mcp.CallToolResult, any, error) {
+		v, e := f(ctx, a)
+		return nil, v, e
+	})
+}
+func (b *Broker) serveMCP(ctx context.Context, c net.Conn) {
+	id := randomID()
+	b.mu.Lock()
+	b.clients[id] = "MCP " + id[:8]
+	b.mu.Unlock()
+	defer b.disconnect(id)
+	s := mcp.NewServer(&mcp.Implementation{Name: "computer-use", Version: "0.1.0"}, &mcp.ServerOptions{Instructions: "Permissioned Hyprland computer use. Approval decisions and modes belong exclusively to the local tray. An approval_required response is not a grant. Use wait_for_permission then retry. Capture and input are window scoped; transient toplevels need their own grant. No shell or arbitrary-file tool. Workspace observation includes new windows while they remain on that workspace. Terminal control is effectively shell authority."})
+	tool(s, "computer_status", "Get this connection's mode and permission status without revealing unapproved window metadata.", func(ctx context.Context, a struct{}) (any, error) {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		gs := []Grant{}
+		rs := []Request{}
+		for _, g := range b.grants {
+			if g.Client == id {
+				gs = append(gs, *g)
+			}
+		}
+		for _, r := range b.requests {
+			if r.Client == id {
+				rs = append(rs, *r)
+			}
+		}
+		return map[string]any{"mode": b.mode, "paused": b.paused, "supervisor_connected": b.uiCount > 0, "client_id": id, "grants": gs, "requests": rs, "limitations": []string{"native Wayland windows only", "root toplevel input; popup sub-surfaces not yet supported", "US ASCII text layout", "no privilege broker"}}, nil
+	})
+	type PermissionArgs struct {
+		Capability string `json:"capability" jsonschema:"observe, control, record, or launch"`
+		Scope      Scope  `json:"scope"`
+		Reason     string `json:"reason" jsonschema:"Short human-readable reason, shown as untrusted agent text in the local tray"`
+	}
+	tool(s, "request_permission", "Ask the local user for a timed permission. This tool cannot grant permissions.", func(ctx context.Context, a PermissionArgs) (any, error) {
+		var w *Window
+		if a.Scope.Kind == "window" {
+			v, e := b.backend.window(ctx, a.Scope.ID)
+			if e != nil {
+				return nil, e
+			}
+			w = &v
+		}
+		g, r, e := b.permit(id, a.Capability, a.Scope, w, cleanReason(a.Reason))
+		if e != nil {
+			return nil, e
+		}
+		if r != "" {
+			return map[string]any{"status": "approval_required", "request_id": r}, nil
+		}
+		return map[string]any{"status": "granted", "grant": g}, nil
+	})
+	tool(s, "wait_for_permission", "Wait for a decision made in the local tray; does not approve anything. Then retry the original tool.", func(ctx context.Context, a struct {
+		Request string `json:"request_id"`
+		Seconds int    `json:"seconds,omitempty"`
+	}) (any, error) {
+		if a.Seconds == 0 {
+			a.Seconds = 60
+		}
+		if a.Seconds < 1 || a.Seconds > 120 {
+			return nil, errors.New("seconds must be 1–120")
+		}
+		ctx, cancel := context.WithTimeout(ctx, time.Duration(a.Seconds)*time.Second)
+		defer cancel()
+		t := time.NewTicker(100 * time.Millisecond)
+		defer t.Stop()
+		for {
+			b.mu.Lock()
+			r := b.requests[a.Request]
+			state := "unknown"
+			if r != nil && r.Client == id {
+				state = r.State
+			}
+			b.mu.Unlock()
+			if state != "pending" {
+				return map[string]any{"status": state}, nil
+			}
+			select {
+			case <-ctx.Done():
+				return map[string]any{"status": "pending"}, nil
+			case <-t.C:
+			}
+		}
+	})
+	tool(s, "list_windows", "List windows on one Hyprland workspace after observation permission. Returns stable IDs, geometry and revisions.", func(ctx context.Context, a struct {
+		Workspace int `json:"workspace"`
+	}) (any, error) {
+		if a.Workspace < 1 || a.Workspace > 10000 {
+			return nil, errors.New("invalid workspace")
+		}
+		_, r, e := b.permit(id, "observe", Scope{"workspace", strconv.Itoa(a.Workspace)}, nil, "Discover windows on this workspace")
+		if e != nil {
+			return nil, e
+		}
+		if r != "" {
+			return map[string]any{"status": "approval_required", "request_id": r}, nil
+		}
+		ws, e := b.backend.windows(ctx)
+		if e != nil {
+			return nil, e
+		}
+		out := []Window{}
+		for _, w := range ws {
+			if w.Workspace.ID == a.Workspace {
+				out = append(out, w)
+			}
+		}
+		return map[string]any{"status": "ok", "windows": out}, nil
+	})
+	type ViewArgs struct {
+		Window   string `json:"window_id"`
+		MaxWidth int    `json:"max_width,omitempty"`
+	}
+	mcp.AddTool(s, &mcp.Tool{Name: "view_window", Description: "Capture this actual toplevel only, not a crop of the desktop. Requires observation permission; returns PNG and the geometry revision."}, func(ctx context.Context, _ *mcp.CallToolRequest, a ViewArgs) (*mcp.CallToolResult, any, error) {
+		w, e := b.backend.window(ctx, a.Window)
+		if e != nil {
+			return nil, nil, e
+		}
+		_, r, e := b.permit(id, "observe", Scope{"window", w.ID}, &w, "View this window")
+		if e != nil {
+			return nil, nil, e
+		}
+		if r != "" {
+			return nil, map[string]any{"status": "approval_required", "request_id": r}, nil
+		}
+		data, e := b.backend.capture(ctx, w, a.MaxWidth)
+		if e != nil {
+			return nil, nil, e
+		}
+		b.mu.Lock()
+		_, ok := b.allowedLocked(id, "observe", Scope{"window", w.ID}, &w)
+		b.mu.Unlock()
+		if !ok {
+			return nil, nil, errors.New("permission revoked during capture")
+		}
+		meta := map[string]any{"status": "ok", "window_id": w.ID, "revision": w.Revision, "logical_size": w.Size}
+		text, _ := json.Marshal(meta)
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(text)}, &mcp.ImageContent{Data: data, MIMEType: "image/png"}}}, nil, nil
+	})
+	tool(s, "input_window", "Perform bounded mouse/key/text actions against one root toplevel through the compositor guard. Mandatory revision rejects stale geometry. No global fallback; no compositor shortcuts.", func(ctx context.Context, a InputArgs) (any, error) { return b.input(ctx, id, a) })
+	tool(s, "record_window", "Start a local, window-only MP4 recording. Separate record permission required. Stops on revoke, expiry, disconnect or 10-minute cap.", func(ctx context.Context, a struct {
+		Window string `json:"window_id"`
+	}) (any, error) {
+		w, e := b.backend.window(ctx, a.Window)
+		if e != nil {
+			return nil, e
+		}
+		return b.record(id, w)
+	})
+	tool(s, "stop_recording", "Stop one recording belonging to this MCP connection.", func(ctx context.Context, a struct {
+		ID string `json:"recording_id"`
+	}) (any, error) {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		r := b.recordings[a.ID]
+		if r == nil || r.Info.Client != id {
+			return nil, errors.New("unknown recording")
+		}
+		r.cancel()
+		return map[string]any{"status": "stopping"}, nil
+	})
+	tool(s, "list_recordings", "List this connection's recordings and local output paths. No arbitrary file read.", func(ctx context.Context, a struct{}) (any, error) {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		out := []RecordingInfo{}
+		for _, r := range b.recordings {
+			if r.Info.Client == id {
+				out = append(out, r.Info)
+			}
+		}
+		return out, nil
+	})
+	tool(s, "launch_application", "Launch an allowlisted application: chromium or pinta. Optional http(s) URL for Chromium only. New windows do not inherit input permission.", func(ctx context.Context, a struct {
+		Application string `json:"application"`
+		URL         string `json:"url,omitempty"`
+	}) (any, error) {
+		if a.Application != "chromium" && a.Application != "pinta" {
+			return nil, errors.New("application is not allowlisted")
+		}
+		args := []string{}
+		if a.URL != "" {
+			u, e := url.Parse(a.URL)
+			if e != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || a.Application != "chromium" {
+				return nil, errors.New("invalid browser URL")
+			}
+			args = append(args, a.URL)
+		}
+		_, r, e := b.permit(id, "launch", Scope{"application", a.Application}, nil, "Launch "+a.Application)
+		if e != nil {
+			return nil, e
+		}
+		if r != "" {
+			return map[string]any{"status": "approval_required", "request_id": r}, nil
+		}
+		cmd := exec.Command(a.Application, args...)
+		if e = cmd.Start(); e != nil {
+			return nil, e
+		}
+		go cmd.Wait()
+		return map[string]any{"status": "launched", "pid": cmd.Process.Pid}, nil
+	})
+	_ = s.Run(ctx, &mcp.IOTransport{Reader: c, Writer: c})
+}

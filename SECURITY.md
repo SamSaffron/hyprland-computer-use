@@ -1,0 +1,31 @@
+# Permission contract and security status
+
+This is a tested prototype, **not a security-audited product**. The intended untrusted party is a client that has only the exposed MCP tools. The desktop user, broker, Quickshell console, compositor, plugins, and other processes with equivalent local authority are trusted.
+
+## Enforced paths
+
+- The production MCP transport is a private Unix socket, reached through a stdio bridge. It exposes no approve/mode/shell/arbitrary-path tool.
+- A separate private UI socket receives local decisions. Quickshell must maintain its connection/heartbeat; losing the final supervisor pauses the broker and clears grants.
+- Grants belong to an MCP connection, have a specific capability/scope, and expire using the server's in-process clock. Disconnect revokes that connection's grants and stops its recordings.
+- Window control adds a compositor lease bound to the live window **object and root surface**, not just its title or PID. The plugin checks time, visibility, session-lock state, geometry and pointer bounds at delivery. It checks that the seat accepted the target focus before sending events.
+- Input is delivered directly to the authorized root surface on the compositor thread, not injected globally after an external focus check. Unavailable guard means no input.
+- Observation uses `grim -T` with the actual foreign-toplevel identifier. It is not output capture cropped by a window rectangle. Opaque Kitty/Pinta capture was tested with another window and the permission panel visible on the same output.
+- Recording is independent of input permission. Revocation/cancellation prevents subsequent capture iterations, checks authorization again before writing captured frames, and finalizes the local video.
+- Held synthetic keys/buttons are tracked and released on explicit release, revocation and expiry where the original target retains focus. A different current focus is never used as a release target.
+
+## What this does not claim
+
+- **Same-user isolation.** A same-UID process can access private runtime sockets; a shell controlled through a terminal can transitively gain that authority. A controlled application may also spawn programs, access files or the network, and use previously cached credentials. The UI explicitly warns for common terminal classes, but class detection is not a sandbox.
+- **Semantic safety.** Permission to click is not permission to purchase, delete, send a message, or elevate privileges. The compositor cannot infer those effects. There is no secure sudo/password handover or privileged-operation broker yet.
+- **Popup/subsurface correctness.** The current injection path targets the root toplevel only. It deliberately does not imply permission for a new transient toplevel. Native menus/popups and input methods require further work.
+- **Compositor compromise resistance.** The guard runs inside Hyprland. Other plugins and compositor bugs can defeat it. The Quickshell border is useful feedback, not an unspoofable compositor-owned secure-attention surface.
+- **Capture confidentiality for every renderer effect.** Transparent/blurred windows, protected content and all renderer paths need further auditing. Successful opaque-window tests do not establish these properties.
+- **Retroactive revocation.** Previously delivered pixels or recorded bytes cannot be recalled. An already executed application operation cannot be undone by revoking its grant.
+- **Full device arbitration.** US ASCII typing is supported in the tested configuration. Mixed layouts, physical input interleaving, lock-screen transitions and multiple seats/outputs require broader testing.
+- **Resource-exhaustion hardening.** Basic per-request, action, peer, recording-count and duration limits exist. This is not yet a hardened multi-tenant daemon; disk retention/quota administration remains the owner's responsibility.
+
+## Fail-closed behavior to preserve
+
+Do not add a fallback from toplevel capture to desktop cropping, or from guard input to `wtype`/`ydotool`/virtual-pointer global injection. Do not expose the local UI command channel as an MCP tool. Do not persist grants across broker/compositor restarts. Do not treat a UI outline as proof that a backend check ran.
+
+For testing, a separate local harness may simulate human approval. That authority must stay outside the MCP client and be clearly labelled in recordings and reports.

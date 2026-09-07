@@ -1,0 +1,5 @@
+build/
+evidence/
+*.log
+*.mp4
+*.png
