@@ -1,0 +1,10 @@
+/* Omarchy-inspired charcoal bar; standalone, not the Omarchy distribution. */
+* { font-family: "JetBrainsMono Nerd Font", monospace; font-size: 13px; min-height: 0; border: none; border-radius: 0; }
+window#waybar { background: #111111; color: #cdd6f4; border-bottom: 1px solid #30343b; }
+#custom-brand { color: #89b4fa; margin-left: 14px; margin-right: 12px; font-weight: bold; }
+#workspaces button { color: #7f849c; padding: 0 10px; }
+#workspaces button.active { color: #89b4fa; background: #242735; border-bottom: 2px solid #89b4fa; }
+#workspaces button:hover { background: #313244; }
+#clock { color: #cdd6f4; }
+#custom-share { color: #a6e3a1; margin-right: 14px; }
+#tray { padding: 0 14px; border-left: 1px solid #45475a; }

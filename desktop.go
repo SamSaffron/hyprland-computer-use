@@ -21,14 +21,15 @@ import (
 )
 
 type Window struct {
-	ID        string `json:"id"`
-	StableID  string `json:"stableId,omitempty"`
-	Address   string `json:"address,omitempty"`
-	Title     string `json:"title"`
-	Class     string `json:"class"`
-	At        [2]int `json:"at"`
-	Size      [2]int `json:"size"`
-	Workspace struct {
+	FocusHistory int    `json:"focusHistoryID"`
+	ID           string `json:"id"`
+	StableID     string `json:"stableId,omitempty"`
+	Address      string `json:"address,omitempty"`
+	Title        string `json:"title"`
+	Class        string `json:"class"`
+	At           [2]int `json:"at"`
+	Size         [2]int `json:"size"`
+	Workspace    struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"workspace"`

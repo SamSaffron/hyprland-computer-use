@@ -11,6 +11,7 @@ ShellRoot {
     id: root
     property var state: ({mode:"approve", paused:false, requests:[], grants:[], audit:[], recordings:[], open:0})
     property bool openPanel: true
+    property string lastError: ""
     property bool confirmYolo: false
     property int lastOpen: -1
     property int minutes: 5
@@ -19,6 +20,7 @@ ShellRoot {
     property color muted: "#9baebb"
     property color accent: state.mode === "yolo" ? "#ed8a71" : "#65d7b2"
     function send(op, fields) {
+        if(op!=="state") root.lastError="";
         let q = fields || {}; q.op=op;
         control.write(JSON.stringify(q)+"\n"); control.flush();
     }
@@ -30,6 +32,7 @@ ShellRoot {
             onRead: data => {
                 try {
                     let s=JSON.parse(data); root.state=s;
+                    if(s.error) root.lastError=s.error;
                     if(s.open!==root.lastOpen) { root.lastOpen=s.open; root.openPanel=true; }
                 } catch(e) { console.warn("Invalid broker state", e); }
             }
@@ -50,6 +53,11 @@ ShellRoot {
         Text { id: labelText; anchors.centerIn: parent; text: button.label; textFormat: Text.PlainText; color: button.foreground; font.pixelSize: 13; font.bold: true }
         MouseArea { id: mouse; anchors.fill: parent; hoverEnabled: true; onClicked: button.clicked() }
     }
+    Picker {
+        brokerState:root.state;errorText:root.lastError
+        onSelectWindow:(id,client,window)=>root.send("select_share",{id:id,client:client,window_id:window})
+        onCancelSelection:id=>root.send("cancel_share",{id:id})
+    }
     // Demo host only. In a normal desktop, the exported StatusNotifierItem lives in the existing tray.
     PanelWindow {
         visible: root.demoTray
@@ -57,7 +65,7 @@ ShellRoot {
         anchors { top:true; right:true }
         margins { top:10; right:12 }
         implicitWidth: 305; implicitHeight: 44
-        exclusiveZone: 0
+        exclusionMode: ExclusionMode.Ignore
         color: "transparent"
         WlrLayershell.namespace: "computer-use-demo-tray"
         Rectangle { anchors.fill:parent; radius:12; color:"#15232e"; border.color:"#3c5361"
@@ -85,7 +93,7 @@ ShellRoot {
             anchors { top:true; left:true }
             margins { left:Math.max(0,modelData.window.at[0]-screen.x);top:Math.max(0,modelData.window.at[1]-screen.y) }
             implicitWidth:modelData.window.size[0];implicitHeight:modelData.window.size[1]
-            exclusiveZone:0;color:"transparent";mask:Region {}
+            exclusionMode:ExclusionMode.Ignore;color:"transparent";mask:Region {}
             WlrLayershell.namespace:"computer-use-target"
             WlrLayershell.layer:WlrLayer.Overlay
             Rectangle { anchors.fill:parent;color:"transparent";border.width:3;border.color:root.accent;radius:3 }
@@ -96,13 +104,13 @@ ShellRoot {
     }
     PanelWindow {
         id: panel
-        visible: root.openPanel
+        visible: root.openPanel && !root.state.picker
         screen: Quickshell.screens[0]
         anchors { top:true; right:true }
-        margins { top:root.demoTray?66:12; right:12 }
+        margins { top:root.demoTray?66:42; right:12 }
         implicitWidth: 440; implicitHeight: 770
-        exclusiveZone: 0
-        focusable: true
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
         color: "transparent"
         WlrLayershell.namespace: "computer-use-permissions"
         WlrLayershell.layer: WlrLayer.Overlay
@@ -119,7 +127,8 @@ ShellRoot {
                 Rectangle { Layout.fillWidth:true; implicitHeight:1;color:"#30424e" }
                 RowLayout { spacing:8
                     ActionButton { label:"Approve";tint:root.state.mode==="approve"?"#255749":"#263b49";onClicked:{root.confirmYolo=false;root.send("mode",{mode:"approve"})} }
-                    ActionButton { label:"YOLO";tint:root.state.mode==="yolo"?"#763e32":"#263b49";onClicked:root.confirmYolo=true }
+                    ActionButton { label:"Share";onClicked:root.send("begin_share",{seconds:root.minutes*60,capability:"control"}) }
+                     ActionButton { label:"YOLO";tint:root.state.mode==="yolo"?"#763e32":"#263b49";onClicked:root.confirmYolo=true }
                     Item { Layout.fillWidth:true }
                     ActionButton { label:root.state.paused?"Resume":"Pause";onClicked:root.send("pause",{paused:!root.state.paused}) }
                 }
@@ -136,7 +145,7 @@ ShellRoot {
                     SpinBox { from:1;to:60;value:5;editable:true;onValueModified:root.minutes=value;implicitWidth:110 }
                     Text { text:"minutes";color:root.muted;font.pixelSize:12 }
                 }
-                Text { visible:root.state.error!==undefined&&root.state.error!=="";Layout.fillWidth:true;wrapMode:Text.WordWrap;text:root.state.error||"";textFormat:Text.PlainText;color:"#ffae93";font.pixelSize:12 }
+                Text { visible:root.lastError!=="";Layout.fillWidth:true;wrapMode:Text.WordWrap;text:root.lastError;textFormat:Text.PlainText;color:"#ffae93";font.pixelSize:12 }
                 ScrollView { id: scroller; Layout.fillWidth:true;Layout.fillHeight:true;clip:true;contentWidth:availableWidth
                     Column { width:scroller.availableWidth;spacing:12
                         Text { text:"REQUESTS  ·  "+root.state.requests.length;color:root.accent;font.pixelSize:11;font.bold:true;font.letterSpacing:1 }

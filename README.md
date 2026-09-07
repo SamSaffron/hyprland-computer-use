@@ -6,6 +6,7 @@ A standalone **Hyprland computer-use MCP server** with a **Quickshell permission
 
 ## The experience
 
+- **Window metadata is free:** IDs, titles, app, workspace, geometry and revisions. Listing does not grant access to pixels or input; it works even while paused. Titles can contain sensitive document names—this is an intentional usability trade-off.
 - **Approve** is the startup default. An MCP request creates a local approval card, not authority.
 - Grant **observation of workspace 1**, or **control of one window**, for a duration you choose (1–60 minutes in the UI).
 - Observation of a workspace explicitly includes newly opened windows while they remain on that workspace. Window control never inherits to another toplevel.
@@ -43,7 +44,7 @@ The Quickshell outline is an **advisory reflection of broker state**, not the se
 | `computer_status` | Mode, pause state, this client's grants and requests |
 | `request_permission` | Request a specific capability/scope; never grants it |
 | `wait_for_permission` | Wait up to 120 seconds for a local decision, then retry |
-| `list_windows` | Discover windows on an approved workspace |
+| `list_windows` | Free metadata discovery; optional workspace filter, no pixels |
 | `view_window` | PNG of the actual toplevel, plus its geometry revision |
 | `input_window` | Focus, move, click, drag, scroll, key chords, text; max 128 actions |
 | `record_window` | Separately approved, window-only local MP4 recording |
@@ -76,6 +77,41 @@ Example input after a control grant:
 ```
 
 Coordinates are **window-local logical pixels**, not scaled screenshot pixels. Read the `logical_size` and revision returned by `view_window`. The client must update its coordinates after geometry changes. A revision protects against compositor geometry changes, **not arbitrary in-app content changes**.
+
+## Proactively share a window
+
+The local user can grant **viewing + control for five minutes**, without an agent asking first:
+
+```sh
+computer-use share
+computer-use share --seconds 600
+computer-use share --view-only
+computer-use share --client CONNECTION_ID --seconds 300
+```
+
+Click a labelled window in the local picker. **Escape cancels**; opening the picker does not grant anything. The console also has a **Share** button. One connected MCP client is selected automatically; with multiple clients the user must choose the recipient. No connected client means no share—nothing is left waiting for an unknown future connection. The MCP client learns its grants through `computer_status`; this does not inject a screenshot or message into its conversation.
+
+The picker expires after 60 seconds and checks the selected window's identity, visibility and geometry again before granting. Pause, revocation, expiry and disconnect apply normally. Recording is still separate. `--view-only` grants no input. The picker currently covers the first Quickshell screen; multi-monitor picker behavior is not claimed.
+
+Define the shortcut in Hyprland's Lua config (tested on 0.56.2):
+
+```lua
+hl.bind("SUPER + CTRL + S", hl.dsp.exec_cmd("/absolute/path/to/computer-use/build/computer-use share"))
+```
+
+For older Hyprland text configuration, the equivalent is `bind = SUPER CTRL, S, exec, /absolute/path/to/computer-use/build/computer-use share`; that syntax is not the tested Lua configuration.
+
+### Omarchy-style bar
+
+`examples/waybar/` supplies a charcoal, JetBrains Mono bar with workspaces, clock, **Share window**, and a real StatusNotifierItem tray. It is an inspired theme, not an Omarchy installation.
+
+```sh
+sudo pacman -S --needed waybar ttf-jetbrains-mono-nerd
+export PATH="$PWD/build:$PATH"
+waybar -c "$PWD/examples/waybar/config.jsonc" -s "$PWD/examples/waybar/style.css"
+```
+
+Run it on the same session D-Bus as the broker. Leave `COMPUTER_USE_DEMO_TRAY` unset when using Waybar; the small built-in demo tray is not needed. No host autostart or shortcut is installed by `make`.
 
 ## Build on Arch
 

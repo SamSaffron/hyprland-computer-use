@@ -1,4 +1,4 @@
-# Prototype verification — 7 September 2026
+# Prototype verification — 7–8 September 2026
 
 This is evidence from one disposable configuration, not a general security audit.
 
@@ -12,11 +12,11 @@ This is evidence from one disposable configuration, not a general security audit
 
 ## Automated and live checks
 
-`go test -race ./...`: **17 tests passed**. `go vet ./...`: passed. Native plugin/helper compilation: passed.
+`go test -race ./...`: **23 top-level tests passed** (including proactive-sharing subcases). `go vet ./...`: passed. Native plugin/helper compilation: passed.
 
 The opt-in `scripts/live-test.py` passed **15 checks** against the actual MCP transport and compositor:
 
-1. Window metadata withheld until a separate local observation grant.
+1. Window metadata is free; pixel observation still requires a separate grant.
 2. MCP cannot directly invoke approval/mode-changing tools.
 3. Native toplevel capture matches the target dimensions.
 4. Approved keyboard actions reach Kitty.
@@ -43,3 +43,9 @@ The old global pointer harness is used **only to simulate the human's permission
 ## Not verified
 
 Physical-desktop device arbitration, mixed DPI/multiple monitors/seats, all lock-screen transitions, popup/subsurface input, XWayland input, transparent/protected capture, and Chromium launch inside this container are not covered by these results. Same-UID processes and controlled terminals retain their local authority. See [SECURITY.md](SECURITY.md).
+
+## Proactive sharing and real toolbar — 8 September
+
+Waybar0.15.0 and JetBrains Mono Nerd Font were installed in the disposable lab. `scripts/live-sharing-test.py` passed **15 additional live checks** using real stdio MCP plus simulated-human pointer/keyboard input: no-request CLI sharing, actual window click, pixel/input access, separate recording gate, cross-window denial, revoke, Escape cancellation, actual Super+Ctrl+S, Waybar Share button, view-only mode, explicit multi-client selection including the real dropdown, recipient isolation/expiry, disconnect/reconnect, paused metadata discovery, and tray activation. Some assertions are grouped into one check.
+
+The lab-only wtype device uses `resolve_binds_by_sym=true` because wtype supplies a custom keymap; this is not a requirement for an ordinary physical keyboard. The picker/target overlays explicitly ignore Waybar's reserved zone so their coordinates stay aligned. The console uses on-demand keyboard focus rather than an exclusive grab. Final lab state: paused, no grants, test clients disconnected.

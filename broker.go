@@ -51,6 +51,8 @@ type Marker struct {
 	Label     string `json:"label"`
 }
 type UIState struct {
+	Clients    []UIClient      `json:"clients"`
+	Picker     *SharePicker    `json:"picker,omitempty"`
 	Targets    []Marker        `json:"targets"`
 	Mode       string          `json:"mode"`
 	Paused     bool            `json:"paused"`
@@ -65,6 +67,7 @@ type UIState struct {
 	Error      string          `json:"error,omitempty"`
 }
 type Broker struct {
+	picker          *SharePicker
 	mu              sync.Mutex
 	lastInputWindow string
 	lastInputUntil  time.Time
@@ -242,6 +245,7 @@ func (b *Broker) revokeLocked(id string) {
 	b.noteLocked("revoked", g.Label)
 }
 func (b *Broker) clearLocked() {
+	b.picker = nil
 	for id := range b.grants {
 		b.revokeLocked(id)
 	}
@@ -276,11 +280,23 @@ func (b *Broker) disconnect(client string) {
 		}
 	}
 	delete(b.clients, client)
+	if b.picker != nil && b.picker.Client == client {
+		b.picker = nil
+	}
 	b.noteLocked("client_disconnected", client)
 }
 func (b *Broker) state(err string) UIState {
 	b.mu.Lock()
 	s := UIState{Mode: b.mode, Paused: b.paused, Connected: b.uiCount > 0, Open: b.open, Now: b.now(), Requests: []Request{}, Grants: []Grant{}, Audit: append([]Audit{}, b.audit...), Recordings: []RecordingInfo{}, Backend: "Compositor-scoped input · native toplevel capture", Error: err}
+	s.Clients = []UIClient{}
+	for id, label := range b.clients {
+		s.Clients = append(s.Clients, UIClient{id, label})
+	}
+	sort.Slice(s.Clients, func(i, j int) bool { return s.Clients[i].ID < s.Clients[j].ID })
+	if b.picker != nil && b.now().Before(b.picker.Expires) {
+		p := *b.picker
+		s.Picker = &p
+	}
 	for _, r := range b.requests {
 		if r.State == "pending" {
 			s.Requests = append(s.Requests, *r)
@@ -334,6 +350,9 @@ func (b *Broker) maintenance(ctx context.Context) {
 			return
 		case <-t.C:
 			b.mu.Lock()
+			if b.picker != nil && !b.now().Before(b.picker.Expires) {
+				b.picker = nil
+			}
 			for id, g := range b.grants {
 				if !b.now().Before(g.Expires) {
 					b.revokeLocked(id)
@@ -372,16 +391,29 @@ func (b *Broker) handleUI(conn net.Conn) {
 			return
 		}
 		var q struct {
-			Op      string `json:"op"`
-			ID      string `json:"id"`
-			Seconds int    `json:"seconds"`
-			Mode    string `json:"mode"`
-			Paused  bool   `json:"paused"`
+			Op         string `json:"op"`
+			Client     string `json:"client"`
+			Capability string `json:"capability"`
+			Window     string `json:"window_id"`
+			ID         string `json:"id"`
+			Seconds    int    `json:"seconds"`
+			Mode       string `json:"mode"`
+			Paused     bool   `json:"paused"`
 		}
 		e := json.Unmarshal(scan.Bytes(), &q)
 		if e == nil {
 			switch q.Op {
 			case "state":
+			case "begin_share":
+				e = b.beginShare(q.Client, q.Capability, q.Seconds)
+			case "select_share":
+				e = b.selectShare(q.ID, q.Client, q.Window)
+			case "cancel_share":
+				b.mu.Lock()
+				if b.picker != nil && b.picker.ID == q.ID {
+					b.picker = nil
+				}
+				b.mu.Unlock()
 			case "approve":
 				e = b.decide(q.ID, q.Seconds, true)
 			case "deny":

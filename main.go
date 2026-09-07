@@ -13,11 +13,12 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 )
 
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: computer-use serve | mcp | ui '{\"op\":\"state\"}'")
+		return errors.New("usage: computer-use serve | mcp | share [--client ID] [--seconds 300] [--view-only] | ui '{\"op\":\"state\"}'")
 	}
 	dir, e := runtimeDir()
 	if e != nil {
@@ -43,6 +44,39 @@ func run() error {
 		}()
 		_, e = io.Copy(os.Stdout, c)
 		return e
+	case "share":
+		f := flag.NewFlagSet("share", flag.ContinueOnError)
+		client := f.String("client", "", "recipient MCP connection ID; picker asks when multiple are connected")
+		seconds := f.Int("seconds", 300, "grant duration, 1–3600 seconds")
+		viewOnly := f.Bool("view-only", false, "share pixels only instead of viewing and control")
+		if e = f.Parse(os.Args[2:]); e != nil {
+			return e
+		}
+		if f.NArg() != 0 {
+			return errors.New("unexpected share arguments")
+		}
+		cap := "control"
+		if *viewOnly {
+			cap = "observe"
+		}
+		c, e := net.Dial("unix", filepath.Join(dir, "ui.sock"))
+		if e != nil {
+			return e
+		}
+		defer c.Close()
+		_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+		if e = json.NewEncoder(c).Encode(map[string]any{"op": "begin_share", "client": *client, "seconds": *seconds, "capability": cap}); e != nil {
+			return e
+		}
+		var state UIState
+		if e = json.NewDecoder(c).Decode(&state); e != nil {
+			return e
+		}
+		if state.Error != "" {
+			return errors.New(state.Error)
+		}
+		fmt.Fprintln(os.Stdout, "Click a window in the local picker to share it. Escape cancels; no grant exists until selection.")
+		return nil
 	case "ui":
 		if len(os.Args) != 3 {
 			return errors.New("ui requires one JSON command")

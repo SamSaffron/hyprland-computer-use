@@ -41,7 +41,7 @@ def ok(name):checks.append(name);print('PASS',name,flush=True)
 local({'op':'mode','mode':'approve'});local({'op':'pause','paused':False})
 c=Client()
 try:
- r=c.call('list_windows',{'workspace':1});v=result(r);assert 'windows' not in v;grant(r);ok('metadata withheld until separate UI grant')
+ r=c.call('list_windows',{});v=result(r);assert v['status']=='ok' and v['windows'];assert not result(c.call('computer_status'))['grants'];grant(c.call('request_permission',{'capability':'observe','scope':{'kind':'workspace','id':'1'},'reason':'Live capture test'}));ok('metadata is free; workspace pixel access still requires a grant')
  windows=result(c.call('list_windows',{'workspace':1}))['windows'];target=next(w for w in windows if w['class']=='kitty');other=next(w for w in windows if 'Pinta' in w['class']);wid=target['id'];rev=target['revision']
  tools=c.rpc('tools/list',{})['result']['tools'];names={t['name'] for t in tools};assert not {'approve','set_mode','shell','ui'}&names;assert denied(c.call('set_mode',{'mode':'yolo'}));assert result(c.call('computer_status'))['mode']=='approve';ok('MCP cannot approve or switch modes')
  r=c.call('view_window',{'window_id':other['id']});result(r);im=next(x for x in r['result']['content'] if x['type']=='image');data=base64.b64decode(im['data']);dims=struct.unpack('>II',data[16:24]);assert dims==tuple(other['size']),(dims,other['size']);ok('native toplevel screenshot dimensions, not desktop crop')
@@ -64,11 +64,11 @@ try:
  rec=result(c.call('record_window',{'window_id':wid}));assert rec['status']=='recording';time.sleep(.7);result(c.call('input_window',dict(actions,actions=[{'type':'text','text':'echo RECORDING_TEST'},{'type':'key','key':'ENTER'}])));time.sleep(.7)
  local({'op':'mode','mode':'approve'});time.sleep(1.5);rs=result(c.call('list_recordings'));record=next(r for r in rs if r['id']==rec['recording_id']);assert record['status']=='stopped' and record['frames']>=2 and record.get('path') and not record.get('error'),record
  subprocess.run(['ffprobe','-v','error',record['path']],check=True);ok('window recording finalizes on mode revocation')
- grant(c.call('list_windows',{'workspace':1}));state=local({'op':'state'});client=next(g['client'] for g in state['grants']);c.close();time.sleep(.5);assert not any(g['client']==client for g in local({'op':'state'})['grants']);ok('client disconnect revokes its grants')
+ grant(c.call('request_permission',{'capability':'observe','scope':{'kind':'workspace','id':'1'},'reason':'Live capture test'}));state=local({'op':'state'});client=next(g['client'] for g in state['grants']);c.close();time.sleep(.5);assert not any(g['client']==client for g in local({'op':'state'})['grants']);ok('client disconnect revokes its grants')
  c=Client();local({'op':'mode','mode':'approve'})
  # Window destruction and title reuse: use an explicitly disposable target.
  proc=subprocess.Popen(['kitty','--title','lifetime-test','bash','--noprofile','--norc'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);time.sleep(1)
- grant(c.call('list_windows',{'workspace':1}));ws=result(c.call('list_windows',{'workspace':1}))['windows'];w=next(w for w in ws if w['title']=='lifetime-test');req=c.call('request_permission',{'capability':'control','scope':{'kind':'window','id':w['id']},'reason':'lifetime test'});grant(req)
+ grant(c.call('request_permission',{'capability':'observe','scope':{'kind':'workspace','id':'1'},'reason':'Live capture test'}));ws=result(c.call('list_windows',{'workspace':1}))['windows'];w=next(w for w in ws if w['title']=='lifetime-test');req=c.call('request_permission',{'capability':'control','scope':{'kind':'window','id':w['id']},'reason':'lifetime test'});grant(req)
  g=next(g for g in local({'op':'state'})['grants'] if g['capability']=='control');proc.terminate();proc.wait();time.sleep(.5);assert not guard({'op':'focus','token':g['id'],'revision':w['revision']})['ok'];ok('destroyed target invalidates compositor lease')
 finally:
  c.close();local({'op':'mode','mode':'approve'});local({'op':'revoke_all'})

@@ -2,6 +2,10 @@
 
 This is a tested prototype, **not a security-audited product**. The intended untrusted party is a client that has only the exposed MCP tools. The desktop user, broker, Quickshell console, compositor, plugins, and other processes with equivalent local authority are trusted.
 
+Window metadata (titles, IDs, app, workspace, geometry) is intentionally available without a desktop grant, including while paused. This can reveal sensitive document names. Pixels, input, recording and application launch retain their permission gates.
+
+Local proactive sharing is exposed only through the UI socket/CLI, not MCP. A click binds a timed grant to one existing MCP connection and one snapshot-validated native window. Multiple clients require a recipient choice; no future-client or broadcast grants.
+
 ## Enforced paths
 
 - The production MCP transport is a private Unix socket, reached through a stdio bridge. It exposes no approve/mode/shell/arbitrary-path tool.

@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/url"
 	"os/exec"
-	"strconv"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -25,15 +24,17 @@ func (b *Broker) serveMCP(ctx context.Context, c net.Conn) {
 	b.clients[id] = "MCP " + id[:8]
 	b.mu.Unlock()
 	defer b.disconnect(id)
-	s := mcp.NewServer(&mcp.Implementation{Name: "computer-use", Version: "0.1.0"}, &mcp.ServerOptions{Instructions: "Permissioned Hyprland computer use. Approval decisions and modes belong exclusively to the local tray. An approval_required response is not a grant. Use wait_for_permission then retry. Capture and input are window scoped; transient toplevels need their own grant. No shell or arbitrary-file tool. Workspace observation includes new windows while they remain on that workspace. Terminal control is effectively shell authority."})
-	tool(s, "computer_status", "Get this connection's mode and permission status without revealing unapproved window metadata.", func(ctx context.Context, a struct{}) (any, error) {
+	s := mcp.NewServer(&mcp.Implementation{Name: "computer-use", Version: "0.1.0"}, &mcp.ServerOptions{Instructions: "Permissioned Hyprland computer use. Approval decisions and modes belong exclusively to the local tray. An approval_required response is not a grant. Use wait_for_permission then retry. Capture and input are window scoped; transient toplevels need their own grant. No shell or arbitrary-file tool. Window metadata discovery is free; pixels still require permission. Local users can proactively grant access without a request; inspect computer_status for grants. Workspace observation includes new windows while they remain on that workspace. Terminal control is effectively shell authority."})
+	tool(s, "computer_status", "Get this connection's mode and permission status including proactively shared windows.", func(ctx context.Context, a struct{}) (any, error) {
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		gs := []Grant{}
 		rs := []Request{}
 		for _, g := range b.grants {
-			if g.Client == id {
-				gs = append(gs, *g)
+			if g.Client == id && b.now().Before(g.Expires) {
+				v := *g
+				v.Remaining = max(0, int(g.Expires.Sub(b.now()).Seconds()))
+				gs = append(gs, v)
 			}
 		}
 		for _, r := range b.requests {
@@ -98,18 +99,11 @@ func (b *Broker) serveMCP(ctx context.Context, c net.Conn) {
 			}
 		}
 	})
-	tool(s, "list_windows", "List windows on one Hyprland workspace after observation permission. Returns stable IDs, geometry and revisions.", func(ctx context.Context, a struct {
-		Workspace int `json:"workspace"`
+	tool(s, "list_windows", "Discover window metadata for free, even while paused: IDs, titles, app, workspace, geometry and revisions. Omit workspace (or use 0) for all workspaces. No pixels or input authority.", func(ctx context.Context, a struct {
+		Workspace int `json:"workspace,omitempty"`
 	}) (any, error) {
-		if a.Workspace < 1 || a.Workspace > 10000 {
+		if a.Workspace < 0 || a.Workspace > 10000 {
 			return nil, errors.New("invalid workspace")
-		}
-		_, r, e := b.permit(id, "observe", Scope{"workspace", strconv.Itoa(a.Workspace)}, nil, "Discover windows on this workspace")
-		if e != nil {
-			return nil, e
-		}
-		if r != "" {
-			return map[string]any{"status": "approval_required", "request_id": r}, nil
 		}
 		ws, e := b.backend.windows(ctx)
 		if e != nil {
@@ -117,7 +111,7 @@ func (b *Broker) serveMCP(ctx context.Context, c net.Conn) {
 		}
 		out := []Window{}
 		for _, w := range ws {
-			if w.Workspace.ID == a.Workspace {
+			if a.Workspace == 0 || w.Workspace.ID == a.Workspace {
 				out = append(out, w)
 			}
 		}
