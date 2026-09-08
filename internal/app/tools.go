@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/url"
@@ -126,36 +125,19 @@ func (b *Broker) newMCPServer(id string, opts *mcp.ServerOptions) *mcp.Server {
 		return map[string]any{"status": "ok", "windows": out}, nil
 	})
 	type ViewArgs struct {
-		Window   string `json:"window_id"`
-		MaxWidth int    `json:"max_width,omitempty"`
+		Window   string `json:"window_id" jsonschema:"Instance-bound window ID returned by list_windows"`
+		MaxWidth int    `json:"max_width,omitempty" jsonschema:"0 defaults to 1280; accepted range 0–1920"`
 	}
-	mcp.AddTool(s, &mcp.Tool{Name: "view_window", Description: "Capture this actual toplevel only, not a crop of the desktop. Requires observation permission; returns PNG and the geometry revision."}, func(ctx context.Context, _ *mcp.CallToolRequest, a ViewArgs) (*mcp.CallToolResult, any, error) {
-		w, e := b.backend.window(ctx, a.Window)
-		if e != nil {
-			return nil, nil, e
+	mcp.AddTool(s, &mcp.Tool{Name: "view_window", Description: "Capture this actual toplevel only, never a desktop crop. Requires observation permission. Returns PNG, actual image dimensions, image-to-window transform, geometry revision, content frame ID and capture completion timestamp. Frame IDs are not input freshness tokens."}, func(ctx context.Context, _ *mcp.CallToolRequest, a ViewArgs) (*mcp.CallToolResult, any, error) {
+		meta, data, err := b.observe(ctx, id, a.Window, a.MaxWidth)
+		if err != nil {
+			return nil, nil, err
 		}
-		_, r, e := b.permit(id, "observe", Scope{"window", w.ID}, &w, "View this window")
-		if e != nil {
-			return nil, nil, e
-		}
-		if r != "" {
-			return nil, map[string]any{"status": "approval_required", "request_id": r}, nil
-		}
-		data, e := b.backend.capture(ctx, w, a.MaxWidth)
-		if e != nil {
-			return nil, nil, e
-		}
-		b.mu.Lock()
-		_, ok := b.allowedLocked(id, "observe", Scope{"window", w.ID}, &w)
-		b.mu.Unlock()
-		if !ok {
-			return nil, nil, errors.New("permission revoked during capture")
-		}
-		meta := map[string]any{"status": "ok", "window_id": w.ID, "revision": w.Revision, "logical_size": w.Size}
-		text, _ := json.Marshal(meta)
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(text)}, &mcp.ImageContent{Data: data, MIMEType: "image/png"}}}, nil, nil
+		return resultContent(meta, data, false), nil, nil
 	})
-	tool(s, "input_window", "Perform bounded mouse/key/text transactions against one permitted root toplevel. Ordinary input restores the user's focus and does not warp the cursor; explicit focus intentionally activates the window. Drag duration_ms must be omitted or 0 (atomic path). Held user input or unsafe grabs cause refusal. Errors may follow partial progress; re-observe before retrying. Mandatory revision rejects stale geometry. No global fallback; no compositor shortcuts.", func(ctx context.Context, a InputArgs) (any, error) { return b.input(ctx, id, a) })
+	mcp.AddTool(s, &mcp.Tool{Name: "input_window", Description: "Perform up to 128 fully prevalidated root-toplevel actions. Window-local logical coordinates and exact geometry revision required. Ordinary input restores focus without cursor warp; explicit focus activates. No global fallback. Runtime failures report acknowledged action/character counts; the failed transaction may still have effects, so re-observe before retrying. Optional then=screenshot observes only after a completed batch and rechecks observation permission; observation failure never means replay the batch."}, func(ctx context.Context, _ *mcp.CallToolRequest, a InputArgs) (*mcp.CallToolResult, any, error) {
+		return b.inputTool(ctx, id, a)
+	})
 	tool(s, "record_window", "Start a local, window-only MP4 recording. Separate record permission required. Stops on revoke, expiry, disconnect or 10-minute cap.", func(ctx context.Context, a struct {
 		Window string `json:"window_id"`
 	}) (any, error) {

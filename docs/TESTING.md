@@ -68,6 +68,28 @@ Before claiming everyday human/agent coexistence, run this acceptance checklist 
 4. Repeat with held physical modifiers/keys/buttons and active grabs/constraints: input must fail without changing focus or sending partial actions. Repeat with human typing between transactions, Caps Lock and a non-US physical layout; check no lost keys or modifier leakage.
 5. Test same-application windows separately, nullable pointer focus, geometry changes, focus-dependent applications, revocation, target closure and disconnect. Recheck local Pause and stale/window-scope denial. Do not infer correctness for popups, IMEs, cross-window drag-and-drop, cursor-shape requests or mixed-DPI setups from basic success.
 
+## Observation and recovery hardening — 9 September
+
+Automated regression coverage now checks screenshot metadata against decoded PNG dimensions, deterministic content IDs, true `grim -T` invocation, rejection of negative/oversized width options before input, lock refusal before and after capture, missing lock status, workspace transitions, post-capture pause, partial text acknowledgements, no later actions after failure, and completed-input preservation when post-action observation fails. These use fake `hyprctl`/`grim` and a private mock guard socket: **not live desktop evidence**.
+
+Current-version release gate (run only with explicit authorization in a disposable compositor):
+
+| Mode or scenario | Current claim / acceptance evidence required |
+|---|---|
+| Visible, unfocused native window | Experimental restoration; rerun the full keyboard/pointer checklist below with actual app changes and next physical input |
+| Fully occluded window | Unverified; confirm isolated capture and delivery without exposing another window or changing activation |
+| Inactive workspace | Not a supported guarantee; current visibility/input checks may refuse. No workspace switching fallback |
+| Hidden/minimized window | Capture rejects hidden/nonvisible targets; no unhide fallback |
+| Same-application windows | Unverified current-version toolkit behavior; verify both windows' content and next human input |
+| Held modifiers, keys/buttons, grabs | Mock refusal tested; physical arbitration remains a live gate |
+| Popup/subsurface, new dialogs | Root-only input; no inherited transient-toplevel grant. Unsupported routing must not be presented as verified |
+| Mixed-DPI / resized target | Validate decoded image-to-logical transforms against real pixels and reject stale geometry |
+| Lock/session deactivation | Begin screenshot and recording, lock before/during capture, then unlock; no new locked frames may be returned/written. Check errors and recording termination. Repeat guard loss and rapid lock/unlock; polling is not an atomic fence |
+| Revoke/pause/supervisor loss/disconnect | Interrupt long text and capture through real MCP; verify no subsequent transactions/frames, inspect reported acknowledgements, and verify next physical input |
+| App render latency | `then=screenshot` is immediate, not settled; verify clients recover by observing again rather than replaying input |
+
+Record the exact Hyprland build hash, guard/broker revision, toolkit/app version, scale/output layout and per-case results. Passing RPCs alone is insufficient; inspect app content and the next physical input. Older demos below do not satisfy this gate. No host plugin was loaded or desktop operated for this hardening work.
+
 ## Go quality checks
 
 `make fmt` applies `go fmt ./...`; `make fmt-check` rejects unformatted Go files without rewriting them; `make vet` runs `go vet ./...`. `make test` requires both Go checks and the standalone native transaction unit tests before running `go test -race ./...`. The GitHub Actions Go workflow runs these checks and builds the standalone executable on pushes and pull requests. XKB, offscreen Quickshell, private-bus tray tests, native plugin builds, and live desktop tests remain separately invoked checks rather than assumed CI coverage. Locally, `make fmt`, `make test`, and the static build passed. A scratch-module negative check confirmed that `fmt-check` rejects unformatted code without changing it, then passes after `make fmt`. The hosted workflow has been added but has not been run on GitHub in this session.

@@ -11,6 +11,15 @@ import (
 )
 
 func inputTransactionFixture(t *testing.T, reject string) (*Broker, chan map[string]any) {
+	return transactionFixture(t, func(q map[string]any) map[string]any {
+		if q["op"] == reject {
+			return map[string]any{"ok": false, "error": "input_busy_keys_held"}
+		}
+		return map[string]any{"ok": true, "version": 2, "focus_preserving": true, "locked": false}
+	})
+}
+
+func transactionFixture(t *testing.T, respond func(map[string]any) map[string]any) (*Broker, chan map[string]any) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "cu-input-")
 	if err != nil {
@@ -41,11 +50,7 @@ func inputTransactionFixture(t *testing.T, reject string) (*Broker, chan map[str
 			var q map[string]any
 			if err := json.NewDecoder(c).Decode(&q); err == nil {
 				calls <- q
-				r := map[string]any{"ok": true, "version": 2, "focus_preserving": true}
-				if q["op"] == reject {
-					r = map[string]any{"ok": false, "error": "input_busy_keys_held"}
-				}
-				json.NewEncoder(c).Encode(r)
+				json.NewEncoder(c).Encode(respond(q))
 			}
 			c.Close()
 		}

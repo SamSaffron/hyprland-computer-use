@@ -106,6 +106,7 @@ func (d *Desktop) guard(ctx context.Context, q map[string]any) error {
 		Version         int    `json:"version"`
 		FocusPreserving bool   `json:"focus_preserving"`
 		InputFaulted    bool   `json:"input_faulted"`
+		Locked          *bool  `json:"locked"`
 	}
 	if e = json.NewDecoder(io.LimitReader(c, 16384)).Decode(&r); e != nil {
 		return e
@@ -113,10 +114,18 @@ func (d *Desktop) guard(ctx context.Context, q map[string]any) error {
 	if !r.OK {
 		return errors.New(r.Error)
 	}
-	if q["op"] == "status" {
-		if r.Version != 2 || !r.FocusPreserving {
-			return errors.New("guard_protocol_mismatch: run `hyprland-computer-use setup` to replace the loaded guard automatically")
+	if q["op"] == "status" && (r.Version != 2 || !r.FocusPreserving) {
+		return errors.New("guard_protocol_mismatch: run `hyprland-computer-use setup` to replace the loaded guard automatically")
+	}
+	if q["observation_check"] == true {
+		if r.Locked == nil {
+			return errors.New("observation_guard_status_unavailable: run `hyprland-computer-use setup` to repair the compositor guard")
 		}
+		if *r.Locked {
+			return errors.New("session_locked")
+		}
+	}
+	if q["op"] == "status" {
 		if r.InputFaulted {
 			return errors.New("input_restore_failed: run `hyprland-computer-use setup` to repair the compositor guard")
 		}
@@ -127,7 +136,10 @@ func (d *Desktop) capture(ctx context.Context, w Window, maxWidth int) ([]byte, 
 	if !w.Visible || w.Hidden || w.Size[0] <= 0 || w.Size[1] <= 0 {
 		return nil, errors.New("window_not_visible")
 	}
-	if maxWidth <= 0 {
+	if maxWidth < 0 {
+		return nil, errors.New("max_width must be 0–1920")
+	}
+	if maxWidth == 0 {
 		maxWidth = 1280
 	}
 	if maxWidth > 1920 {
@@ -136,6 +148,11 @@ func (d *Desktop) capture(ctx context.Context, w Window, maxWidth int) ([]byte, 
 	scale := min(1, float64(maxWidth)/float64(w.Size[0]))
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	// Sample compositor safety before and after grim. This is not an atomic
+	// lock/capture fence: see the documented session-lock verification boundary.
+	if e := d.guard(ctx, map[string]any{"op": "status", "observation_check": true}); e != nil {
+		return nil, e
+	}
 	out, e := command(ctx, "grim", "-T", w.ID, "-s", strconv.FormatFloat(scale, 'f', 4, 64), "-")
 	if e != nil {
 		return nil, e
@@ -148,13 +165,18 @@ func (d *Desktop) capture(ctx context.Context, w Window, maxWidth int) ([]byte, 
 		return nil, errors.New("invalid_capture")
 	}
 	after, e := d.window(ctx, w.ID)
-	if e != nil || after.Revision != w.Revision {
-		return nil, errors.New("geometry_changed_during_capture")
+	if e != nil || after.Revision != w.Revision || after.Size != w.Size || after.Workspace.ID != w.Workspace.ID || !after.Visible || after.Hidden {
+		return nil, errors.New("window_changed_during_capture")
+	}
+	if e := d.guard(ctx, map[string]any{"op": "status", "observation_check": true}); e != nil {
+		return nil, e
 	}
 	return out, nil
 }
 
 type InputArgs struct {
+	Then     string   `json:"then,omitempty" jsonschema:"Omit or screenshot: capture after a completed batch, with a fresh observation permission check"`
+	MaxWidth int      `json:"max_width,omitempty" jsonschema:"Post-action screenshot width limit, 0 defaults to 1280, maximum 1920"`
 	Window   string   `json:"window_id" jsonschema:"Window ID returned by list_windows"`
 	Revision string   `json:"revision" jsonschema:"Exact geometry revision from list_windows or view_window"`
 	Actions  []Action `json:"actions" jsonschema:"Ordered actions, maximum 128; coordinates are window-local logical pixels"`
@@ -249,7 +271,25 @@ func validatePointer(a Action, size [2]int) error {
 	return nil
 }
 
-func (b *Broker) input(ctx context.Context, client string, a InputArgs) (any, error) {
+// InputFailure counts acknowledged transactions, not verified application effects.
+// A failed transaction may have delivered events before its reply was lost.
+type InputFailure struct {
+	CompletedActions    int   `json:"completed_actions"`
+	FailedAction        int   `json:"failed_action"`
+	CompletedCharacters int   `json:"completed_characters"`
+	Cause               error `json:"-"`
+}
+
+func (e *InputFailure) Error() string { return fmt.Sprintf("action %d: %v", e.FailedAction, e.Cause) }
+func (e *InputFailure) Unwrap() error { return e.Cause }
+
+func (b *Broker) input(ctx context.Context, client string, a InputArgs) (map[string]any, error) {
+	if a.Then != "" && a.Then != "screenshot" {
+		return nil, errors.New("then must be omitted or screenshot")
+	}
+	if a.MaxWidth < 0 || a.MaxWidth > 1920 || (a.MaxWidth != 0 && a.Then == "") {
+		return nil, errors.New("max_width requires then=screenshot and must be 0–1920")
+	}
 	if len(a.Actions) == 0 || len(a.Actions) > 128 {
 		return nil, errors.New("actions must contain 1–128 items")
 	}
@@ -341,6 +381,7 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (any, er
 		return send(map[string]any{"op": "key_transaction", "key": c, "mods": mods})
 	}
 	for i, ac := range a.Actions {
+		characters := 0
 		button := uint32(272)
 		if ac.Button == "right" {
 			button = 273
@@ -372,11 +413,22 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (any, er
 				if e = key(c, mods); e != nil {
 					break
 				}
-				time.Sleep(8 * time.Millisecond)
+				characters++
+				select {
+				case <-ctx.Done():
+					e = ctx.Err()
+				case <-time.After(8 * time.Millisecond):
+				}
+				if e != nil {
+					break
+				}
 			}
 		}
 		if e != nil {
-			return nil, fmt.Errorf("action %d: %w", i, e)
+			b.mu.Lock()
+			b.noteLocked("input_failed", fmt.Sprintf("window=%s completed_actions=%d failed_action=%d acknowledged_characters=%d", w.ID, i, i, characters))
+			b.mu.Unlock()
+			return nil, &InputFailure{CompletedActions: i, FailedAction: i, CompletedCharacters: characters, Cause: e}
 		}
 	}
 	b.mu.Lock()

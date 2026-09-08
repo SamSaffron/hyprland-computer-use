@@ -65,7 +65,31 @@ Example input after a control grant:
 }
 ```
 
-Coordinates are **window-local logical pixels**, not scaled screenshot pixels. Read the `logical_size` and revision returned by `view_window`. The client must update its coordinates after geometry changes. A revision protects against compositor geometry changes, **not arbitrary in-app content changes**.
+Coordinates are **window-local logical pixels**, not scaled screenshot pixels. `view_window` returns:
+
+- `image_size`: actual decoded PNG width/height; `logical_size`: window width/height.
+- `image_to_window`: `window_x = image_x * scale_x + offset_x` (likewise Y), with zero offsets for the full toplevel. Coordinates remain bounded by the logical window.
+- `revision` and its explicit alias `geometry_revision`: geometry only.
+- `frame_id`: SHA-256 of the encoded PNG; equal encoded content has the same ID, even across captures. It is **not an accepted input precondition**, an accessibility snapshot, or evidence the app is still unchanged.
+- `captured_at`: UTC broker timestamp after capture and its safety checks, not the compositor's presentation timestamp.
+
+`max_width` may be 0 (default 1280) through 1920; negative values are rejected. PNG transport remains bounded to 16 MiB. No crop, JPEG/WebP, or semantic observation is implemented. The client must update coordinates after geometry changes. A revision protects against compositor geometry changes, **not arbitrary in-app content changes**.
+
+### Batch recovery and action-and-observe
+
+Set `"then": "screenshot"` on `input_window` for an immediate post-batch PNG, optionally with `max_width`. A nonzero `max_width` without `then` is rejected. All options are validated before input. The screenshot runs only after a completed batch and uses a fresh observation check and fresh geometry. Under the existing grant model, control and record grants include observation; observation alone never includes control or recording. There is no new permission bypass.
+
+The result metadata is available in both MCP `structuredContent` and a JSON text block, including runtime failures and approval responses. Images are additional content blocks. The result retains `status: completed`, `actions` and `window_id`, with nested `observation` metadata and PNG content. If capture fails or permission has gone away, `observation.status` is `failed` (or `approval_required` with a request ID), but the **input remains completed**. Retry observation, not the batch. This captures immediately; it does not wait for application rendering or promise a settled frame.
+
+Runtime input errors return MCP `isError: true` with JSON text containing `status: failed`, zero-based `failed_action`, `completed_actions`, and `completed_characters` in the failed text action (zero for other actions). Counts describe **acknowledged compositor transactions**, not confirmed app effects. The failed transaction may have delivered events before a lost reply or restoration error; `failed_transaction_may_have_effects` is therefore always true. Later actions are not attempted. Prevalidation/authorization failures still use ordinary tool errors or approval responses. Do not blindly replay interrupted text. Successful observations and failed-batch counts are audited without typed text.
+
+### Observation safety boundary
+
+All capture paths, including each recording frame, require a compatible compositor guard reporting an unlocked, active session both before and after `grim -T`. Missing/unknown lock status or guard failure refuses capture. Geometry, visibility and workspace changes during capture discard the frame; observation permission is checked again before releasing it. Recording stops on capture failure.
+
+These are **sampled checks, not an atomic compositor capture fence**. A lock/unlock entirely between checks or a lock after the final check is not excluded (including before a recording frame is written). No complete screen-lock confidentiality guarantee or live lock-transition validation is claimed. See [TESTING.md](TESTING.md).
+
+**Compatibility change:** capture previously could run without the guard; it now requires a reachable protocol-2 guard exposing lock status. An input-restoration fault also blocks observation conservatively until repair. Run `hyprland-computer-use setup` locally if the guard is missing, incompatible or faulted; MCP cannot repair or bypass it.
 
 ### Focus-preserving input (experimental)
 
