@@ -2,7 +2,7 @@
 
 Let an MCP agent view and control **windows you approve**, with a local Quickshell permission console and tray icon. Access starts denied; you choose the windows and duration, and can pause or revoke it.
 
-**Experimental.** Tested against Hyprland **0.56.2**; the plugin requires headers matching your exact running build. Use disposable windows first. Input supports native Wayland toplevels and US-ASCII text, not XWayland. Focus-preserving input and automatic live plugin replacement still need live testing. **Sharing a terminal gives shell authority—this is not a sandbox.**
+**Experimental.** Tested against Hyprland **0.56.2**; the plugin requires headers matching your exact running build. Use disposable windows first. Input supports native Wayland toplevels, with target-scoped Unicode/bulk text implemented but not yet live-validated; not XWayland. Focus-preserving input and automatic live plugin replacement still need live testing. **Sharing a terminal gives shell authority—this is not a sandbox.**
 
 ## Quick start
 
@@ -81,6 +81,7 @@ No autostart service or compositor-config edit is installed. Service/config-mana
 | [Remote access / OAuth](docs/AUTH.md) | HTTP, TLS, authentication and connection approval |
 | [Development](docs/DEVELOPMENT.md) | Source layout, builds, tests, manual plugin loading |
 | [Releasing](docs/RELEASING.md) | GoReleaser archives, checksums, publishing workflow |
+| [Unicode and bulk text](docs/TEXT_INPUT.md) | Text contract, upgrade requirements and two-window manual test |
 | [Testing status](docs/TESTING.md) | Exact lab versions, verified and unverified behavior |
 | [Security](SECURITY.md) | Trust boundaries and guarantees |
 

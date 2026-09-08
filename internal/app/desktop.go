@@ -91,28 +91,60 @@ func (d *Desktop) window(ctx context.Context, id string) (Window, error) {
 	return Window{}, errors.New("window_unavailable")
 }
 func (d *Desktop) guard(ctx context.Context, q map[string]any) error {
+	textCount := 0
+	if q["op"] == "text_transaction" {
+		scalars, valid := q["scalars"].([]rune)
+		if !valid || len(scalars) == 0 || len(scalars) > textChunkRunes {
+			return errors.New("invalid_text_request")
+		}
+		textCount = len(scalars)
+	}
 	c, e := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "unix", filepath.Join(d.Dir, "guard.sock"))
 	if e != nil {
 		return fmt.Errorf("compositor_guard_unavailable: %w", e)
 	}
 	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(2 * time.Second))
+	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
+	defer stop()
+	deadline := time.Now().Add(2 * time.Second)
+	if until, ok := ctx.Deadline(); ok && until.Before(deadline) {
+		deadline = until
+	}
+	_ = c.SetDeadline(deadline)
 	if e = json.NewEncoder(c).Encode(q); e != nil {
 		return e
 	}
 	var r struct {
-		OK              bool   `json:"ok"`
-		Error           string `json:"error"`
-		Version         int    `json:"version"`
-		FocusPreserving bool   `json:"focus_preserving"`
-		InputFaulted    bool   `json:"input_faulted"`
-		Locked          *bool  `json:"locked"`
+		OK                  bool   `json:"ok"`
+		Error               string `json:"error"`
+		Version             int    `json:"version"`
+		FocusPreserving     bool   `json:"focus_preserving"`
+		InputFaulted        bool   `json:"input_faulted"`
+		Locked              *bool  `json:"locked"`
+		UnicodeText         bool   `json:"unicode_text"`
+		TextChunkRunes      int    `json:"text_chunk_runes"`
+		CompletedCharacters *int   `json:"completed_characters"`
 	}
 	if e = json.NewDecoder(io.LimitReader(c, 16384)).Decode(&r); e != nil {
 		return e
 	}
+	if q["op"] == "text_transaction" {
+		count := 0
+		if r.CompletedCharacters != nil {
+			count = *r.CompletedCharacters
+		}
+		if count < 0 || count > textCount || (r.OK && (r.CompletedCharacters == nil || count != textCount)) {
+			return errors.New("invalid_text_progress_reply")
+		}
+		if !r.OK {
+			return &TextDeliveryError{Completed: count, Cause: errors.New(r.Error)}
+		}
+	}
 	if !r.OK {
 		return errors.New(r.Error)
+	}
+	if q["unicode_check"] == true && (!r.UnicodeText || r.TextChunkRunes != textChunkRunes) {
+		return errors.New("unicode_text_guard_unavailable: run `hyprland-computer-use setup` to update the compositor guard")
 	}
 	if q["op"] == "status" && (r.Version != 2 || !r.FocusPreserving) {
 		return errors.New("guard_protocol_mismatch: run `hyprland-computer-use setup` to replace the loaded guard automatically")
@@ -190,7 +222,7 @@ type Action struct {
 	Button     string  `json:"button,omitempty"`
 	Delta      float64 `json:"delta,omitempty"`
 	Key        string  `json:"key,omitempty" jsonschema:"e.g. ENTER, CTRL+L, ALT+LEFT; SUPER/global compositor shortcuts are not supported"`
-	Text       string  `json:"text,omitempty"`
+	Text       string  `json:"text,omitempty" jsonschema:"UTF-8 Unicode text; LF and TAB act as Return and Tab keys. Other C0/C1 controls including CR are rejected. All text actions combined may contain at most 262144 UTF-8 bytes. Delivered in bounded 48-scalar chunks, not clipboard paste."`
 	DurationMS int     `json:"duration_ms,omitempty" jsonschema:"For drag omit or use 0: focus-preserving drags are bounded atomic paths; timed drags are unsupported"`
 }
 
@@ -284,6 +316,8 @@ func (e *InputFailure) Error() string { return fmt.Sprintf("action %d: %v", e.Fa
 func (e *InputFailure) Unwrap() error { return e.Cause }
 
 func (b *Broker) input(ctx context.Context, client string, a InputArgs) (map[string]any, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
 	if a.Then != "" && a.Then != "screenshot" {
 		return nil, errors.New("then must be omitted or screenshot")
 	}
@@ -304,18 +338,20 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (map[str
 		return nil, errors.New("stale_geometry")
 	}
 	// Validate all actions before any effects.
+	totalTextBytes := 0
+	hasText := false
 	for _, ac := range a.Actions {
 		switch ac.Type {
 		case "focus", "move", "click", "drag", "scroll":
 		case "text":
-			if len(ac.Text) > 4096 {
-				return nil, errors.New("text too long")
+			totalTextBytes += len(ac.Text)
+			if totalTextBytes > maxBatchTextBytes {
+				return nil, errors.New("text exceeds 262144 UTF-8 bytes per batch")
 			}
-			for _, r := range ac.Text {
-				if _, _, e := runeKey(r); e != nil {
-					return nil, e
-				}
+			if e := validateText(ac.Text); e != nil {
+				return nil, e
 			}
+			hasText = hasText || ac.Text != ""
 		case "key":
 			if _, _, e := keySpec(ac.Key); e != nil {
 				return nil, e
@@ -345,6 +381,11 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (map[str
 	}
 	b.inputMu.Lock()
 	defer b.inputMu.Unlock()
+	if hasText {
+		if e := b.backend.guard(ctx, map[string]any{"op": "status", "unicode_check": true}); e != nil {
+			return nil, e
+		}
+	}
 	token := ""
 	if grant != nil {
 		token = grant.ID
@@ -408,20 +449,18 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (map[str
 			c, mods, _ := keySpec(ac.Key)
 			e = key(c, mods)
 		case "text":
-			for _, r := range ac.Text {
-				c, mods, _ := runeKey(r)
-				if e = key(c, mods); e != nil {
-					break
-				}
-				characters++
-				select {
-				case <-ctx.Done():
-					e = ctx.Err()
-				case <-time.After(8 * time.Millisecond):
-				}
+			runes := []rune(ac.Text)
+			for start := 0; start < len(runes); start += textChunkRunes {
+				chunk := runes[start:min(start+textChunkRunes, len(runes))]
+				e = send(map[string]any{"op": "text_transaction", "scalars": chunk})
 				if e != nil {
+					var delivery *TextDeliveryError
+					if errors.As(e, &delivery) {
+						characters += delivery.Completed
+					}
 					break
 				}
+				characters += len(chunk)
 			}
 		}
 		if e != nil {

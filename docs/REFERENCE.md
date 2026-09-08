@@ -83,6 +83,12 @@ The result metadata is available in both MCP `structuredContent` and a JSON text
 
 Runtime input errors return MCP `isError: true` with JSON text containing `status: failed`, zero-based `failed_action`, `completed_actions`, and `completed_characters` in the failed text action (zero for other actions). Counts describe **acknowledged compositor transactions**, not confirmed app effects. The failed transaction may have delivered events before a lost reply or restoration error; `failed_transaction_may_have_effects` is therefore always true. Later actions are not attempted. Prevalidation/authorization failures still use ordinary tool errors or approval responses. Do not blindly replay interrupted text. Successful observations and failed-batch counts are audited without typed text.
 
+### Unicode and bulk text
+
+Text actions accept UTF-8 Unicode, with an aggregate limit of 262,144 UTF-8 bytes per batch and a 60-second execution budget. Delivery uses bounded 48-scalar compositor transactions, without clipboard access or per-character sleeps. LF and TAB send Return and Tab; other C0/C1 controls (including CR/CRLF) are rejected before any batch effects. Convert line endings to LF. Text is keyboard input, not guaranteed literal insertion: app shortcuts, autoindent and form submission still apply.
+
+Temporary text maps go only to the target client's keyboard resources and are explicitly restored; they are never installed as the global seat keyboard. Failure progress counts Unicode scalars, not graphemes or bytes, and a lost chunk reply can leave up to 48 scalars uncertain. A text-containing batch requires the guard's `unicode_text` feature before executing any actions. Run local `setup` after updating the executable. See [Unicode/bulk text and manual test](TEXT_INPUT.md) for exact semantics and live-validation limits.
+
 ### Observation safety boundary
 
 All capture paths, including each recording frame, require a compatible compositor guard reporting an unlocked, active session both before and after `grim -T`. Missing/unknown lock status or guard failure refuses capture. Geometry, visibility and workspace changes during capture discard the frame; observation permission is checked again before releasing it. Recording stops on capture failure.
@@ -107,7 +113,7 @@ Native mock restoration tests and exact 0.56.2 header compilation are covered; r
 
 - **Native Wayland root toplevels only for input.** XWayland input and popup/subsurface routing are not implemented. Separate transient toplevels require their own grants.
 - The built-in Go Wayland client supplies virtual keyboard and pointer seat capabilities; the guard delivers input directly. It selects the dedicated US keyboard and an available trusted local virtual pointer, never a physical pointer.
-- Text is **US-layout ASCII**. Unsupported Unicode is rejected rather than silently mistyped. Physical-keyboard/layout arbitration needs more work before everyday desktop use.
+- Text supports Unicode scalars through target-client keymaps; shortcut `key` actions still use the US layout. Universal toolkit/IME behavior and physical-keyboard arbitration require live testing. See [text input](TEXT_INPUT.md).
 - No clipboard, arbitrary file, shell, accessibility-tree, or privileged-operation tool.
 - A controlled terminal or browser retains the application's existing powers. This is not application sandboxing or semantic authorization of purchases/deletions/sudo. There is no sudo broker.
 - `launch_application` relies on the application's normal launch/sandbox configuration. Chromium inside restrictive containers may need setup outside this tool; the MCP API does not offer `--no-sandbox`.

@@ -41,7 +41,7 @@ func toolMetadata(t *testing.T, r *mcp.CallToolResult) map[string]any {
 	return meta
 }
 func safeStatus() map[string]any {
-	return map[string]any{"ok": true, "version": 2, "focus_preserving": true, "locked": false}
+	return map[string]any{"ok": true, "version": 2, "focus_preserving": true, "locked": false, "unicode_text": true, "text_chunk_runes": textChunkRunes}
 }
 
 func TestCaptureMetadata(t *testing.T) {
@@ -173,9 +173,11 @@ func TestPartialTextResult(t *testing.T) {
 			pointers.Add(1)
 		}
 		if q["op"] == "key_transaction" {
-			if keys.Add(1) == 3 {
-				return map[string]any{"ok": false, "error": "input_busy_keys_held"}
-			}
+			keys.Add(1)
+		}
+		if q["op"] == "text_transaction" {
+			keys.Add(1)
+			return map[string]any{"ok": false, "error": "input_busy_keys_held", "completed_characters": 1}
 		}
 		return safeStatus()
 	})
@@ -184,7 +186,7 @@ func TestPartialTextResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	meta := toolMetadata(t, r)
-	if meta["completed_actions"] != float64(1) || meta["failed_action"] != float64(1) || meta["completed_characters"] != float64(1) || meta["failed_transaction_may_have_effects"] != true || keys.Load() != 3 || pointers.Load() != 0 {
+	if meta["completed_actions"] != float64(1) || meta["failed_action"] != float64(1) || meta["completed_characters"] != float64(1) || meta["failed_transaction_may_have_effects"] != true || keys.Load() != 2 || pointers.Load() != 0 {
 		t.Fatal(meta, keys.Load(), pointers.Load())
 	}
 }

@@ -95,9 +95,20 @@ constexpr int WL_KEYBOARD_KEY_STATE_RELEASED = 0,
 constexpr int WL_POINTER_BUTTON_STATE_RELEASED = 0,
               WL_POINTER_BUTTON_STATE_PRESSED = 1;
 static uint32_t millis() { return 1; }
+struct CWLKeyboardResource {
+  std::vector<SP<IKeyboard>> maps;
+  int failAt = 0;
+  void sendKeymap(SP<IKeyboard> map) {
+    maps.push_back(map);
+    if (int(maps.size()) == failAt) throw std::runtime_error("keymap_test_failure");
+  }
+};
 struct Seat {
+  SP<CWLKeyboardResource> targetKeys = std::make_shared<CWLKeyboardResource>();
+  SP<CWLKeyboardResource> unrelatedKeys = std::make_shared<CWLKeyboardResource>();
   struct FocusResource {
-    std::vector<bool> m_keyboards{true}, m_pointers{true};
+    std::vector<WP<CWLKeyboardResource>> m_keyboards;
+    std::vector<bool> m_pointers{true};
   };
   SP<FocusResource> focusResource = std::make_shared<FocusResource>();
   WP<IKeyboard> m_keyboard;
@@ -108,11 +119,13 @@ struct Seat {
     WP<FocusResource> keyboardFocusResource, pointerFocusResource;
   } m_state;
   Seat() {
+    focusResource->m_keyboards = {targetKeys};
     m_state.keyboardFocusResource = focusResource;
     m_state.pointerFocusResource = focusResource;
   }
   std::vector<std::string> events;
   std::string failOn;
+  int failKeyDownAt = 0, keyDowns = 0;
   IKeyboard::SModifiersEvent sentMods;
   Vector2D local;
   void event(const std::string &s) {
@@ -127,6 +140,8 @@ struct Seat {
     m_state.keyboardFocus = s;
   }
   void setKeyboard(SP<IKeyboard> k) {
+    // Fails even on transient global installation of a private text map.
+    assert(!k || k->m_xkbKeymapString.find("text-chunk") == std::string::npos);
     event("keyboard");
     m_keyboard = k;
   }
@@ -135,6 +150,7 @@ struct Seat {
     sentMods = {d, l, k, g};
   }
   void sendKeyboardKey(uint32_t, uint32_t, int state) {
+    if (state && ++keyDowns == failKeyDownAt) throw std::runtime_error("partial_text_test");
     event(state ? "key_down" : "key_up");
   }
   void setMouse(SP<IPointer> p) {
@@ -175,6 +191,7 @@ static Manager manager;
 static Manager *mgr() { return &manager; }
 } // namespace Pointer
 #include "input_transaction.hpp"
+#include "text_transaction.hpp"
 
 struct Fixture {
   SP<IKeyboard> human = std::make_shared<IKeyboard>(),
@@ -209,7 +226,105 @@ struct Fixture {
     assert((Pointer::mgr()->position() == Vector2D{100, 200}));
   }
 };
-int main() {
+static SP<IKeyboard> makeTextMap(const std::string &map) {
+  auto keyboard = std::make_shared<IKeyboard>();
+  keyboard->m_xkbKeymapString = map;
+  return keyboard;
+}
+int main(int argc, char **argv) {
+  if (argc > 1 && std::string(argv[1]) == "--text-keymap") {
+    std::vector<uint32_t> scalars;
+    for (int i = 2; i < argc; ++i) scalars.push_back(std::stoul(argv[i]));
+    std::cout << textKeymap(scalars);
+    return 0;
+  }
+  {
+    Fixture f;
+    std::vector<uint32_t> scalars{0x41,0xe9,0x4e16,0x1f680,0x301,9,10};
+    textTransaction(f.target,f.agent,scalars,makeTextMap);
+    assert(g_pSeatManager->keyDowns==7);
+    auto &maps = g_pSeatManager->targetKeys->maps;
+    assert(maps.size() == 2 && maps[0]->m_xkbKeymapString == textKeymap(scalars) && maps[1] == f.human);
+    assert(g_pSeatManager->unrelatedKeys->maps.empty());
+    f.restored();
+  }
+  for (auto bad : {0u,13u,0x7fu,0x85u,0xd800u,0x110000u}) {
+    Fixture f;
+    try { textTransaction(f.target,f.agent,{65,bad},makeTextMap); assert(false); }
+    catch(const TextFailure &e) { assert(e.completed==0); }
+    assert(g_pSeatManager->events.empty());
+  }
+  for (size_t size : {size_t(0), TEXT_CHUNK_RUNES + 1}) {
+    Fixture f;
+    try { textTransaction(f.target,f.agent,std::vector<uint32_t>(size,65),makeTextMap); assert(false); }
+    catch(const TextFailure &e) { assert(e.completed==0); }
+    assert(g_pSeatManager->events.empty());
+  }
+  {
+    Fixture f;
+    try { textTransaction(f.target,f.agent,{65},[](const std::string &) -> SP<IKeyboard> { throw std::runtime_error("allocation_failed"); }); assert(false); }
+    catch(const TextFailure &e) { assert(e.completed==0); }
+    assert(g_pSeatManager->events.empty());
+  }
+  {
+    Fixture f;
+    g_pSeatManager->failKeyDownAt=3;
+    try { textTransaction(f.target,f.agent,{65,66,67,68},makeTextMap); assert(false); }
+    catch(const TextFailure &e) { assert(e.completed==2); }
+    f.restored();
+  }
+
+  {
+    Fixture f;
+    // No device switch at all; temporary target map still must be restored.
+    g_pSeatManager->m_keyboard = f.agent;
+    textTransaction(f.target,f.agent,{65},makeTextMap);
+    assert(g_pSeatManager->targetKeys->maps.back() == f.agent);
+    assert(g_pSeatManager->unrelatedKeys->maps.empty());
+    assert(g_pSeatManager->m_keyboard.lock() == f.agent);
+  }
+  {
+    Fixture f;
+    g_pSeatManager->targetKeys->failAt = 1;
+    try { textTransaction(f.target,f.agent,{65},makeTextMap); assert(false); }
+    catch (const TextFailure &e) { assert(e.completed == 0); }
+    assert(g_pSeatManager->targetKeys->maps.back() == f.human);
+    f.restored();
+  }
+  {
+    Fixture f;
+    g_pSeatManager->targetKeys->failAt = 2;
+    try { textTransaction(f.target,f.agent,{65},makeTextMap); assert(false); }
+    catch (const TextFailure &e) { assert(e.completed == 1); }
+    assert(inputFaulted);
+    assert(g_pSeatManager->m_keyboard.lock() == f.human);
+  }
+  for (bool failRestore : {false, true}) {
+    Fixture f;
+    auto second = std::make_shared<CWLKeyboardResource>();
+    g_pSeatManager->focusResource->m_keyboards.push_back(second);
+    if (failRestore) g_pSeatManager->targetKeys->failAt = 2;
+    try {
+      textTransaction(f.target, f.agent, {65, 66}, makeTextMap);
+      assert(!failRestore);
+    } catch (const TextFailure &e) { assert(failRestore && e.completed == 2); }
+    assert(second->maps.size() == 2 && second->maps.back() == f.human);
+    assert(inputFaulted == failRestore);
+  }
+  {
+    Fixture f;
+    InputTransaction t(f.target, false);
+    try { t.installTargetKeymap(makeTextMap(textKeymap({65}))); assert(false); }
+    catch (const std::runtime_error &) {}
+    assert(g_pSeatManager->targetKeys->maps.empty());
+  }
+  {
+    Fixture f;
+    g_pSeatManager->m_keyboard = SP<IKeyboard>{};
+    try { textTransaction(f.target, f.agent, {65}, makeTextMap); assert(false); }
+    catch (const TextFailure &e) { assert(e.completed == 0); }
+    assert(g_pSeatManager->events.empty() && g_pSeatManager->targetKeys->maps.empty());
+  }
   {
     Fixture f;
     InputTransaction t(f.target, false);

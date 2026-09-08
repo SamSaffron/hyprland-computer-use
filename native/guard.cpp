@@ -62,6 +62,8 @@ static bool locked() {
          g_pSessionLockManager->isSessionLocked();
 }
 #include "input_transaction.hpp"
+#include "text_transaction.hpp"
+#include "text_keyboard.hpp"
 
 static void clear() { leases.clear(); }
 static void expire() {
@@ -82,6 +84,8 @@ static json execute(const json &q, pid_t owner) {
             {"backend", "hyprland-compositor"},
             {"version", 2},
             {"focus_preserving", true},
+            {"unicode_text", true},
+            {"text_chunk_runes", TEXT_CHUNK_RUNES},
             {"input_faulted", inputFaulted},
             {"leases", leases.size()},
             {"locked", locked()}};
@@ -149,6 +153,24 @@ static json execute(const json &q, pid_t owner) {
     transaction.borrowKeyboard(agent);
     transaction.key(key, mods);
     transaction.finish();
+  } else if (op == "text_transaction") {
+    const auto values = q.value("scalars", json::array());
+    if (!values.is_array() || values.empty() || values.size() > TEXT_CHUNK_RUNES)
+      throw std::runtime_error("invalid_text_chunk_size");
+    std::vector<uint32_t> scalars;
+    for (const auto &value : values) {
+      if (!value.is_number_integer() || value < 0 || value > 0x10ffff)
+        throw std::runtime_error("invalid_text_scalar");
+      const auto scalar = value.get<uint32_t>();
+      textKeysym(scalar); // reject controls/surrogates before allocating the map
+      scalars.push_back(scalar);
+    }
+    auto agent = agentKeyboard(owner);
+    textTransaction(surf, agent, scalars, [](const std::string &map) {
+      return makeShared<TextKeyboard>(map);
+    });
+    return {{"ok", true}, {"revision", revision(w)},
+            {"completed_characters", scalars.size()}};
   } else if (op == "pointer_transaction") {
     const auto kind = q.value("kind", "");
     if (kind != "move" && kind != "click" && kind != "scroll" && kind != "drag")
@@ -224,10 +246,17 @@ static int readPeer(int fd, uint32_t mask, void *data) {
   if (p->data.find('\n') == std::string::npos)
     return 0;
   json out;
+  bool textRequest = false;
   try {
-    out = execute(json::parse(p->data), p->pid);
+    const auto q = json::parse(p->data);
+    textRequest = q.is_object() && q.contains("op") && q["op"] == "text_transaction";
+    out = execute(q, p->pid);
+  } catch (const TextFailure &e) {
+    out = {{"ok", false}, {"error", e.what()},
+           {"completed_characters", e.completed}};
   } catch (const std::exception &e) {
     out = {{"ok", false}, {"error", e.what()}};
+    if (textRequest) out["completed_characters"] = 0;
   }
   auto text = out.dump() + "\n";
   send(fd, text.data(), text.size(), MSG_NOSIGNAL);

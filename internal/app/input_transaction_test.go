@@ -15,7 +15,11 @@ func inputTransactionFixture(t *testing.T, reject string) (*Broker, chan map[str
 		if q["op"] == reject {
 			return map[string]any{"ok": false, "error": "input_busy_keys_held"}
 		}
-		return map[string]any{"ok": true, "version": 2, "focus_preserving": true, "locked": false}
+		r := safeStatus()
+		if q["op"] == "text_transaction" {
+			r["completed_characters"] = len(q["scalars"].([]any))
+		}
+		return r
 	})
 }
 
@@ -75,7 +79,7 @@ func TestInputUsesCompleteTransactions(t *testing.T) {
 	for len(calls) > 0 {
 		requests = append(requests, <-calls)
 	}
-	want := []string{"authorize", "key_transaction", "key_transaction", "key_transaction", "pointer_transaction", "pointer_transaction", "pointer_transaction", "pointer_transaction", "revoke"}
+	want := []string{"status", "authorize", "key_transaction", "text_transaction", "pointer_transaction", "pointer_transaction", "pointer_transaction", "pointer_transaction", "revoke"}
 	if len(requests) != len(want) {
 		t.Fatalf("unexpected guard calls: %+v", requests)
 	}
@@ -89,14 +93,14 @@ func TestInputUsesCompleteTransactions(t *testing.T) {
 		if _, ok := q["button_state"]; ok {
 			t.Fatal("split button event escaped broker")
 		}
-		if i > 0 && i < len(requests)-1 && q["revision"] != "20,40,600,800" {
+		if i > 1 && i < len(requests)-1 && q["revision"] != "20,40,600,800" {
 			t.Fatal("missing geometry guard")
 		}
-		if q["token"] != requests[0]["token"] {
+		if i > 0 && q["token"] != requests[1]["token"] {
 			t.Fatal("lost lease binding")
 		}
 	}
-	if requests[1]["mods"] != float64(4) || requests[2]["mods"] != float64(1) {
+	if requests[2]["mods"] != float64(4) || len(requests[3]["scalars"].([]any)) != 2 || requests[3]["scalars"].([]any)[0] != float64(65) || requests[3]["scalars"].([]any)[1] != float64(98) {
 		t.Fatal("lost modifiers")
 	}
 	drag := requests[5]

@@ -49,7 +49,7 @@ func (b *Broker) newMCPServer(id string, opts *mcp.ServerOptions) *mcp.Server {
 				rs = append(rs, *r)
 			}
 		}
-		return map[string]any{"mode": b.mode, "paused": b.paused, "supervisor_connected": b.uiCount > 0, "client_id": id, "grants": gs, "requests": rs, "limitations": []string{"native Wayland windows only", "root toplevel input; popup sub-surfaces not yet supported", "US ASCII text layout", "no privilege broker"}}, nil
+		return map[string]any{"mode": b.mode, "paused": b.paused, "supervisor_connected": b.uiCount > 0, "client_id": id, "grants": gs, "requests": rs, "limitations": []string{"native Wayland windows only", "root toplevel input; popup sub-surfaces not yet supported", "Unicode text via target-client keymaps; toolkit behavior needs live validation", "no privilege broker"}}, nil
 	})
 	type PermissionArgs struct {
 		Capability string `json:"capability" jsonschema:"observe, control, record, or launch"`
@@ -135,7 +135,7 @@ func (b *Broker) newMCPServer(id string, opts *mcp.ServerOptions) *mcp.Server {
 		}
 		return resultContent(meta, data, false), nil, nil
 	})
-	mcp.AddTool(s, &mcp.Tool{Name: "input_window", Description: "Perform up to 128 fully prevalidated root-toplevel actions. Window-local logical coordinates and exact geometry revision required. Ordinary input restores focus without cursor warp; explicit focus activates. No global fallback. Runtime failures report acknowledged action/character counts; the failed transaction may still have effects, so re-observe before retrying. Optional then=screenshot observes only after a completed batch and rechecks observation permission; observation failure never means replay the batch."}, func(ctx context.Context, _ *mcp.CallToolRequest, a InputArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(s, &mcp.Tool{Name: "input_window", Description: "Perform up to 128 fully prevalidated root-toplevel actions with a 60-second execution budget. Unicode text is limited to 262144 UTF-8 bytes per batch and delivered in 48-scalar chunks without clipboard access. Window-local logical coordinates and exact geometry revision required. Ordinary input restores focus without cursor warp; explicit focus activates. No global fallback. Runtime failures report acknowledged action/character counts; the failed transaction may still have effects, so re-observe before retrying. Optional then=screenshot observes only after a completed batch and rechecks observation permission; observation failure never means replay the batch."}, func(ctx context.Context, _ *mcp.CallToolRequest, a InputArgs) (*mcp.CallToolResult, any, error) {
 		return b.inputTool(ctx, id, a)
 	})
 	tool(s, "record_window", "Start a local, window-only MP4 recording. Separate record permission required. Stops on revoke, expiry, disconnect or 10-minute cap.", func(ctx context.Context, a struct {

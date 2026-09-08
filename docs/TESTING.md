@@ -12,6 +12,21 @@ This is evidence from one disposable configuration, not a general security audit
 - The lab's Aquamarine **0.15.0** build has local nested-backend compatibility patches (xdg_wm_base version clamp and backend-supported buffer modifiers). This was not a stock physical-monitor deployment.
 - Persistent helper supplies a US virtual keyboard and virtual pointer. Guard built against the exact running compositor's headers.
 
+## Unicode/bulk text — 9 September 2026
+
+Target-scoped Unicode text now uses 48-scalar compositor transactions, without per-character sleeps/round trips or clipboard access. The broker prevalidates all text and enforces a 256 KiB aggregate UTF-8 budget plus a 60-second batch execution budget. Native code validates scalars again and sends a self-contained map only to the target's keyboard resources; the text-map carrier is never registered or set as the global keyboard.
+
+Automated checks cover real-XKB compilation/Unicode decoding of the actual native-generated map; native paired events, target-only map dispatch, normal/same-device restoration, map setup/restoration faults, invalid scalars/chunk bounds, and partial chunk progress; Go batching beyond the old 4,096-byte cap, aggregate budget rejection before effects, old-guard feature refusal, and revocation between chunks. Existing native and Go input/capture/permission regressions still apply. Run:
+
+```sh
+make test
+COMPUTER_USE_TEST_XKB=1 go test -race -run 'Test(KeyboardKeymapXKB|TextKeymapXKB)' -v ./internal/app
+make native
+make native-text-wire-test  # installed libwayland-server, private socketpair only
+```
+
+The optional XKB test compiles `native/input_transaction_test.cpp` in temporary storage and asks its real keymap generator for a map, then checks it using Python ctypes/libxkbcommon. It does not operate a desktop. Linux carrier tests verify sealed/NUL-terminated map contents, zero file offset and descriptor cleanup. A private-socketpair test against the installed libwayland-server verifies that a queued keymap FD survives destruction of its original carrier before flush; no compositor/session is involved. Native tests also cover multiple target resources, missing-keyboard refusal and prohibition of even transient global text-map installation. Go tests reject malformed progress and preserve prior chunk counts on cancellation. The guard compiles against lab **Hyprland 0.56.2** headers. **No new live plugin was loaded and Unicode/bulk delivery is not yet live-validated.** Use the [two-editor manual acceptance test](TEXT_INPUT.md#manual-test-two-disposable-editor-windows), including actual application content, the next physical keystroke, same-app windows, refusal and revocation. These results are not universal toolkit, IME, hidden-window or literal paste guarantees.
+
 ## Source layout and release packaging — 8 September
 
 Application code/tests now live in `internal/app`, with the executable under `cmd/hyprland-computer-use`. The root asset package embeds the original native/QML sources and license notices. `make test`, Go vet/builds, recursive formatting rejection/acceptance checks, and optional XKB, offscreen QML, and private-bus tray tests passed after the move. Local Markdown links and fragments were checked.

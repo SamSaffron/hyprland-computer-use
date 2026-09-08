@@ -6,6 +6,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 static bool inputFaulted = false;
 
 static void requireIdleInput() {
@@ -59,6 +60,7 @@ class InputTransaction {
   IKeyboard::SModifiersEvent mods;
   bool keyboardBorrowed = false, pointerBorrowed = false, restored = false;
   std::optional<uint32_t> heldKey, heldButton;
+  std::vector<SP<CWLKeyboardResource>> textResources;
 
 public:
   InputTransaction(SP<CWLSurfaceResource> surf, bool pointer)
@@ -111,6 +113,20 @@ public:
         std::ranges::none_of(resource->m_keyboards,
                              [](const auto &k) { return bool(k); }))
       throw std::runtime_error("keyboard_focus_refused");
+  }
+
+  // Send text-bearing maps ONLY to resources used for this target's input.
+  // The carrier is never the seat keyboard and cannot broadcast its contents.
+  void installTargetKeymap(SP<IKeyboard> map) {
+    auto resource = g_pSeatManager->m_state.keyboardFocusResource.lock();
+    if (!keyboardBorrowed || !keyboard || !map || !resource ||
+        !textResources.empty() || !liveSurface(target) ||
+        g_pSeatManager->m_state.keyboardFocus.lock() != target.lock())
+      throw std::runtime_error("text_focus_refused");
+    for (const auto &ref : resource->m_keyboards)
+      if (auto k = ref.lock()) textResources.push_back(k);
+    if (textResources.empty()) throw std::runtime_error("keyboard_focus_refused");
+    for (const auto &k : textResources) k->sendKeymap(map);
   }
 
   void key(uint32_t code, uint32_t modifiers) {
@@ -166,10 +182,18 @@ public:
     restored = true;
     try {
       if (keyboardBorrowed) {
-        if (heldKey && liveSurface(target) &&
-            g_pSeatManager->m_state.keyboardFocus.lock() == target.lock())
-          g_pSeatManager->sendKeyboardKey(millis(), *heldKey,
-                                          WL_KEYBOARD_KEY_STATE_RELEASED);
+        try {
+          if (heldKey && liveSurface(target) &&
+              g_pSeatManager->m_state.keyboardFocus.lock() == target.lock())
+            g_pSeatManager->sendKeyboardKey(millis(), *heldKey,
+                                            WL_KEYBOARD_KEY_STATE_RELEASED);
+        } catch (...) { inputFaulted = true; }
+        // Explicit restoration is required even when setKeyboard below is a
+        // no-op (same device/client). Try every touched resource on failure.
+        for (const auto &k : textResources) {
+          try { k->sendKeymap(keyboard); }
+          catch (...) { inputFaulted = true; }
+        }
         g_pSeatManager->setKeyboardFocus(nullptr);
         g_pSeatManager->setKeyboard(keyboard);
         g_pSeatManager->setKeyboardFocus(liveSurface(kbFocus));
