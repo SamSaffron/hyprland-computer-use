@@ -122,9 +122,11 @@ hl.bind("SUPER + CTRL + S", hl.dsp.exec_cmd("/absolute/path/to/hyprland-computer
 
 For older Hyprland text configuration, the equivalent is `bind = SUPER CTRL, S, exec, /absolute/path/to/hyprland-computer-use/build/hyprland-computer-use share`; that syntax is not the tested Lua configuration.
 
-### Omarchy-style bar
+### Optional Waybar example
 
-`examples/waybar/` supplies a charcoal, JetBrains Mono bar with workspaces, clock, **Share window**, and a real StatusNotifierItem tray. It is an inspired theme, not an Omarchy installation.
+The permission console and window picker use **Quickshell**. Use your existing desktop bar and StatusNotifierItem tray; Waybar is not required.
+
+For a bare test session, `examples/waybar/` provides an optional bar with workspaces, a clock, a **Share window** button, and a tray.
 
 ```sh
 sudo pacman -S --needed waybar ttf-jetbrains-mono-nerd

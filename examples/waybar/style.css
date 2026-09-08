@@ -1,4 +1,4 @@
-/* Omarchy-inspired charcoal bar; standalone, not the Omarchy distribution. */
+/* Optional Waybar example for a standalone test session. */
 * { font-family: "JetBrainsMono Nerd Font", monospace; font-size: 13px; min-height: 0; border: none; border-radius: 0; }
 window#waybar { background: #111111; color: #cdd6f4; border-bottom: 1px solid #30343b; }
 #custom-brand { color: #89b4fa; margin-left: 14px; margin-right: 12px; font-weight: bold; }
