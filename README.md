@@ -37,6 +37,8 @@ The plugin has a trusted same-UID local control channel used by the broker; it d
 
 The Quickshell outline is an **advisory reflection of broker state**, not the security enforcement mechanism. Enforcement is in the broker and plugin. See [SECURITY.md](SECURITY.md) for the trust boundary and important exclusions.
 
+The executable is **`hyprland-computer-use`**. Use **`computer-use`** as the MCP server name in your client configuration.
+
 ## MCP tools
 
 | Tool | Purpose |
@@ -84,13 +86,13 @@ Local stdio remains the default—no OAuth setup and no network listener. HTTP a
 
 ```sh
 # Local stdio (unchanged)
-computer-use serve
+hyprland-computer-use serve
 
 # Loopback-only HTTP, no OAuth
-computer-use serve --http 127.0.0.1:8099
+hyprland-computer-use serve --http 127.0.0.1:8099
 
 # OAuth behind your HTTPS reverse proxy; no external identity provider
-computer-use serve --http 127.0.0.1:8099 --oauth --public-url https://desktop.example.com
+hyprland-computer-use serve --http 127.0.0.1:8099 --oauth --public-url https://desktop.example.com
 ```
 
 OAuth clients discover the provider, dynamically register, and use authorization code + PKCE S256. The desktop user approves the connection in Quickshell. **Authentication allows MCP access, not window viewing/control.** Free metadata is available only after connection authentication when OAuth is enabled. The provider supports public/confidential clients and rotating refresh tokens, bounded by the one-hour locally approved connection lifetime.
@@ -102,10 +104,10 @@ See [AUTH.md](AUTH.md) for direct TLS, endpoints, persistence, revocation, compa
 The local user can grant **viewing + control for five minutes**, without an agent asking first:
 
 ```sh
-computer-use share
-computer-use share --seconds 600
-computer-use share --view-only
-computer-use share --client CONNECTION_ID --seconds 300
+hyprland-computer-use share
+hyprland-computer-use share --seconds 600
+hyprland-computer-use share --view-only
+hyprland-computer-use share --client CONNECTION_ID --seconds 300
 ```
 
 Click a labelled window in the local picker. **Escape cancels**; opening the picker does not grant anything. The console also has a **Share** button. One connected MCP client is selected automatically; with multiple clients the user must choose the recipient. No connected client means no share—nothing is left waiting for an unknown future connection. The MCP client learns its grants through `computer_status`; this does not inject a screenshot or message into its conversation.
@@ -115,10 +117,10 @@ The picker expires after 60 seconds and checks the selected window's identity, v
 Define the shortcut in Hyprland's Lua config (tested on 0.56.2):
 
 ```lua
-hl.bind("SUPER + CTRL + S", hl.dsp.exec_cmd("/absolute/path/to/computer-use/build/computer-use share"))
+hl.bind("SUPER + CTRL + S", hl.dsp.exec_cmd("/absolute/path/to/hyprland-computer-use/build/hyprland-computer-use share"))
 ```
 
-For older Hyprland text configuration, the equivalent is `bind = SUPER CTRL, S, exec, /absolute/path/to/computer-use/build/computer-use share`; that syntax is not the tested Lua configuration.
+For older Hyprland text configuration, the equivalent is `bind = SUPER CTRL, S, exec, /absolute/path/to/hyprland-computer-use/build/hyprland-computer-use share`; that syntax is not the tested Lua configuration.
 
 ### Omarchy-style bar
 
@@ -151,7 +153,7 @@ Run as your desktop user, with its `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY`, `HYPRLA
 
 ```sh
 hyprctl plugin load "$PWD/build/guard.so"
-./build/computer-use serve
+./build/hyprland-computer-use serve
 ```
 
 In another terminal in the same desktop session:
@@ -166,7 +168,7 @@ Configure an MCP client to use:
 {
   "mcpServers": {
     "computer-use": {
-      "command": "/absolute/path/to/computer-use/build/computer-use",
+      "command": "/absolute/path/to/hyprland-computer-use/build/hyprland-computer-use",
       "args": ["mcp"]
     }
   }
@@ -180,7 +182,7 @@ Runtime sockets are under `$XDG_RUNTIME_DIR/computer-use/` (directory `0700`, so
 Local emergency/admin command, **not an MCP tool**:
 
 ```sh
-./build/computer-use ui '{"op":"pause","paused":true}'
+./build/hyprland-computer-use ui '{"op":"pause","paused":true}'
 ```
 
 A desktop owner can bind that command to an emergency shortcut. No global binding or autostart service is installed automatically.

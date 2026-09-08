@@ -6,16 +6,16 @@ OAuth is a **mode you opt into**, not a prerequisite for local use. No external 
 
 | Mode | Start | Network/auth behavior |
 |---|---|---|
-| Local default | `computer-use serve` | Private Unix sockets; use `computer-use mcp` as a stdio bridge. No HTTP listener or OAuth endpoints. |
-| Local HTTP | `computer-use serve --http 127.0.0.1:8099` | Streamable HTTP at `/mcp`, without OAuth. Literal loopback binding only. |
-| Built-in OAuth | `computer-use serve --http ... --oauth --public-url https://...` | OAuth-protected Streamable HTTP, local consent, standard discovery and client registration. |
+| Local default | `hyprland-computer-use serve` | Private Unix sockets; use `hyprland-computer-use mcp` as a stdio bridge. No HTTP listener or OAuth endpoints. |
+| Local HTTP | `hyprland-computer-use serve --http 127.0.0.1:8099` | Streamable HTTP at `/mcp`, without OAuth. Literal loopback binding only. |
+| Built-in OAuth | `hyprland-computer-use serve --http ... --oauth --public-url https://...` | OAuth-protected Streamable HTTP, local consent, standard discovery and client registration. |
 
 Start Quickshell separately in the same desktop session, as in the README. All modes expose the same ten MCP tools and desktop permission policy. OAuth is for the HTTP transport; the stdio bridge does not acquire an OAuth login requirement.
 
 ### Direct HTTPS
 
 ```sh
-./build/computer-use serve \
+./build/hyprland-computer-use serve \
   --http 0.0.0.0:8443 \
   --public-url https://desktop.example.com:8443 \
   --oauth \
@@ -28,7 +28,7 @@ Use a certificate trusted by the MCP client/browser. The disposable-lab test use
 ### Behind an HTTPS reverse proxy
 
 ```sh
-./build/computer-use serve \
+./build/hyprland-computer-use serve \
   --http 127.0.0.1:8099 \
   --public-url https://desktop.example.com \
   --oauth

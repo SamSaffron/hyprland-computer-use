@@ -18,7 +18,7 @@ import (
 
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: computer-use serve | mcp | share [--client ID] [--seconds 300] [--view-only] | ui '{\"op\":\"state\"}'")
+		return errors.New("usage: hyprland-computer-use serve | mcp | share [--client ID] [--seconds 300] [--view-only] | ui '{\"op\":\"state\"}'")
 	}
 	dir, e := runtimeDir()
 	if e != nil {

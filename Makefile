@@ -1,9 +1,9 @@
 BIN := build
 .PHONY: all native test clean
-all: $(BIN)/computer-use native
+all: $(BIN)/hyprland-computer-use native
 $(BIN):
 	mkdir -p $(BIN)
-$(BIN)/computer-use: $(wildcard *.go) go.mod go.sum | $(BIN)
+$(BIN)/hyprland-computer-use: $(wildcard *.go) go.mod go.sum | $(BIN)
 	CGO_ENABLED=0 go build -trimpath -o $@ .
 native: $(BIN)/guard.so $(BIN)/computer-use-keyboard
 $(BIN)/guard.so: native/guard.cpp | $(BIN)

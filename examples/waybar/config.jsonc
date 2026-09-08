@@ -6,6 +6,6 @@
   "custom/brand": { "format": "󰣇  COMPUTER USE", "tooltip": false },
   "hyprland/workspaces": { "format": "{name}", "on-click": "activate", "persistent-workspaces": {"*": 4} },
   "clock": { "format": "{:%a %d %b   %H:%M}", "tooltip": false },
-  "custom/share": { "format": "󰒃  Share window", "tooltip-format": "Share viewing + control · Super+Ctrl+S", "on-click": "computer-use share" },
+  "custom/share": { "format": "󰒃  Share window", "tooltip-format": "Share viewing + control · Super+Ctrl+S", "on-click": "hyprland-computer-use share" },
   "tray": { "icon-size": 20, "spacing": 12, "show-passive-items": true }
 }

@@ -6,7 +6,7 @@ import base64,json,os,socket,subprocess,time
 from pathlib import Path
 if os.environ.get('COMPUTER_USE_DISPOSABLE')!='1':raise SystemExit('Disposable compositor only')
 root=Path(os.environ['XDG_RUNTIME_DIR'])/'computer-use'
-binary=os.environ.get('COMPUTER_USE_BINARY',str(Path(__file__).resolve().parent.parent/'build/computer-use'))
+binary=os.environ.get('COMPUTER_USE_BINARY',str(Path(__file__).resolve().parent.parent/'build/hyprland-computer-use'))
 pointer=os.environ['COMPUTER_USE_HUMAN_POINTER']
 class Client:
  def __init__(self):
