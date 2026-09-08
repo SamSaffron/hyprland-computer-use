@@ -10,7 +10,7 @@ Local proactive sharing is exposed only through the UI socket/CLI, not MCP. A cl
 
 ## Enforced paths
 
-- The default MCP transport is a private Unix socket, reached through a stdio bridge. Optional Streamable HTTP can use the built-in OAuth provider; see [AUTH.md](AUTH.md). It exposes no approve/mode/shell/arbitrary-path tool.
+- The default MCP transport is a private Unix socket, reached through a stdio bridge. Optional Streamable HTTP can use the built-in OAuth provider; see [AUTH.md](docs/AUTH.md). It exposes no approve/mode/shell/arbitrary-path tool.
 - A separate private UI socket receives local decisions. Quickshell must maintain its connection/heartbeat; losing the final supervisor pauses the broker and clears grants.
 - Grants belong to an MCP connection, have a specific capability/scope, and expire using the server's in-process clock. Disconnect revokes that connection's grants and stops its recordings.
 - Window control adds a compositor lease bound to the live window **object and root surface**, not just its title or PID. The plugin checks time, visibility, session-lock state, geometry and pointer bounds at delivery. It checks that the seat accepted the target focus before sending events.

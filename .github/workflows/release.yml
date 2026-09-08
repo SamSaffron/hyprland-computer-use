@@ -1,28 +1,33 @@
-name: Go checks
+name: Release
 
 on:
   push:
-  pull_request:
+    tags:
+      - 'v*'
 
 permissions:
   contents: read
 
 jobs:
-  go:
+  release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: Formatting, vet, native transaction tests, and Go race tests
+      - name: Test before packaging
         run: make test
-      - name: Build the standalone Go executable
-        run: make build/hyprland-computer-use
-      - name: Validate release packaging without publishing
+      - name: Publish release archives and checksums
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: '~> v2'
-          args: release --snapshot --clean --skip=publish
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

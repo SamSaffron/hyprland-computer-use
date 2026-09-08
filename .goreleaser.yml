@@ -1,0 +1,52 @@
+version: 2
+
+project_name: hyprland-computer-use
+
+builds:
+  - id: hyprland-computer-use
+    main: ./cmd/hyprland-computer-use
+    binary: hyprland-computer-use
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/sam-saffron-jarvis/hyprland-computer-use/internal/app.Version={{.Version}}
+      - -X github.com/sam-saffron-jarvis/hyprland-computer-use/internal/app.Commit={{.Commit}}
+      - -X github.com/sam-saffron-jarvis/hyprland-computer-use/internal/app.Date={{.Date}}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+      - THIRD_PARTY.md
+      - SECURITY.md
+      - docs/*.md
+      - native/*.xml
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  github:
+    owner: samsaffron
+    name: hyprland-computer-use
+  name_template: "Release {{ .Tag }}"
+  draft: false
+  prerelease: auto
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
