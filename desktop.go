@@ -220,7 +220,7 @@ func runeKey(r rune) (uint32, uint32, error) {
 	case '\\':
 		return 43, mods, nil
 	}
-	return 0, 0, fmt.Errorf("unsupported text character %U; prototype keyboard layout is US ASCII", r)
+	return 0, 0, fmt.Errorf("unsupported text character %U; keyboard layout is US ASCII", r)
 }
 func validatePointer(a Action, size [2]int) error {
 	if a.Type != "move" && a.Type != "click" && a.Type != "drag" && a.Type != "scroll" {

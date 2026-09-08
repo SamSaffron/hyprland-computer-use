@@ -1,6 +1,6 @@
 # Permission contract and security status
 
-This is a tested prototype, **not a security-audited product**. The intended untrusted party is a client that has only the exposed MCP tools. The desktop user, broker, Quickshell console, compositor, plugins, and other processes with equivalent local authority are trusted.
+This document describes the trust boundary and known limitations. The intended untrusted party is a client that has only the exposed MCP tools. The desktop user, broker, Quickshell console, compositor, plugins, and other processes with equivalent local authority are trusted.
 
 Window metadata (titles, IDs, app, workspace, geometry) is intentionally available without a desktop grant, including while paused. In OAuth mode this still requires a valid connection access token. This can reveal sensitive document names. Pixels, input, recording and application launch retain their permission gates.
 

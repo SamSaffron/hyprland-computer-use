@@ -1,4 +1,4 @@
-module github.com/sam-saffron-jarvis/computer-use
+module github.com/sam-saffron-jarvis/hyprland-computer-use
 
 go 1.27.0
 

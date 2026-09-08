@@ -1,4 +1,4 @@
-# Prototype verification — 7–8 September 2026
+# Verification — 7–8 September 2026
 
 This is evidence from one disposable configuration, not a general security audit.
 

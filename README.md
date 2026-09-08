@@ -1,8 +1,8 @@
-# Computer Use
+# Hyprland Computer Use
 
 A standalone **Hyprland computer-use MCP server** with a **Quickshell permission console** and a real system-tray item.
 
-**Experimental prototype, not a security-audited desktop-access product.** Built and exercised in an isolated GPU-backed Hyprland session. Do not mistake a working demo for a complete desktop sandbox.
+Built and tested in an isolated GPU-backed Hyprland session. See [SECURITY.md](SECURITY.md) for the trust model and [TESTING.md](TESTING.md) for verified behavior and current limitations.
 
 ## The experience
 
@@ -31,7 +31,7 @@ The tray item uses the StatusNotifierItem protocol and works with a tray host su
 
 ### Why a compositor plugin?
 
-“Focus window A, then inject global input” has a race. This prototype instead validates a short-lived lease, live window object, root surface, visibility, and geometry revision **inside Hyprland's event loop**, then delivers input to that surface. It verifies the seat accepted the intended focus before sending events. There is **no global-input fallback**.
+“Focus window A, then inject global input” has a race. The compositor guard instead validates a short-lived lease, live window object, root surface, visibility, and geometry revision **inside Hyprland's event loop**, then delivers input to that surface. It verifies the seat accepted the intended focus before sending events. There is **no global-input fallback**.
 
 The plugin has a trusted same-UID local control channel used by the broker; it does not authenticate one particular process. It checks expiry independently, releases its tracked held inputs on revocation, rejects stale geometry/out-of-bounds pointer coordinates, and invalidates leases when the bound window/surface disappears. Its exact Hyprland build hash must match the headers used to build it.
 
@@ -173,7 +173,7 @@ Configure an MCP client to use:
 }
 ```
 
-The bridge and broker must have access to the same private runtime socket. For a remote agent, forward stdio over SSH to an authorized desktop-user command; this prototype does not expose an unauthenticated network listener.
+The bridge and broker must have access to the same private runtime socket. For a remote agent, forward stdio over SSH to an authorized desktop-user command; non-loopback HTTP requires OAuth and an HTTPS public origin; see [AUTH.md](AUTH.md).
 
 Runtime sockets are under `$XDG_RUNTIME_DIR/computer-use/` (directory `0700`, sockets `0600`). Recordings and JSONL audit entries default to `$XDG_STATE_HOME/computer-use/`, or `~/.local/state/computer-use/`. Recordings are sensitive: no automatic upload and no automatic deletion/retention service is provided.
 

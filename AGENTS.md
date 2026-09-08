@@ -1,6 +1,6 @@
-# Computer Use
+# Hyprland Computer Use
 
-Standalone Hyprland computer-use MCP server with a Quickshell permission console. Local experimental project; no term-llm integration or live-desktop deployment is implied.
+Standalone Hyprland computer-use MCP server with a Quickshell permission console. Standalone project; no term-llm integration or live-desktop deployment is implied.
 
 ## Working rules
 - Work inline: no background agent jobs.

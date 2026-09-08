@@ -64,7 +64,7 @@ Based on the MCP [2025-11-25 authorization specification](https://modelcontextpr
 - RFC9207 issuer identification in authorization responses.
 - Official Go SDK Streamable HTTP transport and bearer-token middleware. HTTP sessions are bound to the authenticated authorization grant, not trusted merely because a client supplies a session ID.
 
-Client ID Metadata Documents (CIMD) are not implemented; clients must support dynamic registration. This avoids introducing arbitrary metadata-URL fetching/SSRF in this prototype. This is a tested implementation of the discovery/code/PKCE flow, **not an independent OAuth security certification**.
+Client ID Metadata Documents (CIMD) are not implemented; clients must support dynamic registration. This avoids introducing arbitrary metadata-URL fetching/SSRF in the authorization server. This is a tested implementation of the discovery/code/PKCE flow, **not an independent OAuth security certification**.
 
 ## Lifecycle and storage
 
