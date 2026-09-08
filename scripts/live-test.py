@@ -51,13 +51,13 @@ try:
  cross={'window_id':other['id'],'revision':other['revision'],'actions':[{'type':'click','x':10,'y':10}]};r=c.call('input_window',cross);assert result(r)['status']=='approval_required';local({'op':'deny','id':result(r)['request_id']});ok('window grant does not permit another window')
  r=c.call('input_window',dict(actions,revision='stale'));assert denied(r);ok('stale geometry rejected')
  r=c.call('input_window',dict(actions,actions=[{'type':'click','x':-1,'y':5}]));assert denied(r);ok('out-of-window coordinates rejected before effects')
- grants=local({'op':'state'})['grants'];g=next(g for g in grants if g['capability']=='control');assert not guard({'op':'pointer','token':g['id'],'revision':rev,'x':100000,'y':10})['ok'];ok('compositor independently rejects out-of-window pointer')
+ grants=local({'op':'state'})['grants'];g=next(g for g in grants if g['capability']=='control');assert not guard({'op':'pointer_transaction','kind':'move','token':g['id'],'revision':rev,'x':100000,'y':10})['ok'];ok('compositor independently rejects out-of-window pointer')
  time.sleep(3.2);assert result(c.call('input_window',actions))['status']=='approval_required';assert not guard({'op':'focus','token':g['id'],'revision':rev})['ok'];ok('expiry enforced by broker and compositor')
  local({'op':'mode','mode':'yolo'});assert result(c.call('input_window',dict(actions,actions=[{'type':'key','key':'CTRL+L'},{'type':'text','text':'echo YOLO_TEST'},{'type':'key','key':'ENTER'}])))['status']=='completed';ok('YOLO auto-allows without grants')
  local({'op':'pause','paused':True});assert denied(c.call('input_window',actions));local({'op':'pause','paused':False});ok('pause overrides YOLO')
  # Pointer path actually delivered to Pinta, away from the trusted overlay.
  before=c.call('view_window',{'window_id':other['id']});before=base64.b64decode(next(x for x in before['result']['content'] if x['type']=='image')['data'])
- a={'window_id':other['id'],'revision':other['revision'],'actions':[{'type':'click','x':28,'y':485},{'type':'drag','x':100,'y':350,'to_x':200,'to_y':390,'duration_ms':250},{'type':'scroll','x':180,'y':400,'delta':10}]}
+ a={'window_id':other['id'],'revision':other['revision'],'actions':[{'type':'click','x':28,'y':485},{'type':'drag','x':100,'y':350,'to_x':200,'to_y':390},{'type':'scroll','x':180,'y':400,'delta':10}]}
  assert result(c.call('input_window',a))['status']=='completed';time.sleep(.3)
  after=c.call('view_window',{'window_id':other['id']});after=base64.b64decode(next(x for x in after['result']['content'] if x['type']=='image')['data']);assert before!=after,'pointer actions did not change Pinta pixels'
  Path('/home/demo/lab/pointer-before.png').write_bytes(before);Path('/home/demo/lab/pointer-after.png').write_bytes(after);ok('scoped pointer click, drag, scroll execute and change Pinta pixels')

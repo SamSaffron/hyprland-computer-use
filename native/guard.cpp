@@ -10,6 +10,11 @@
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/pointer/PointerManager.hpp>
+#include <hyprland/src/protocols/InputCapture.hpp>
+#include <hyprland/src/protocols/InputMethodV2.hpp>
+#include <hyprland/src/protocols/core/Compositor.hpp>
+#include <hyprland/src/protocols/core/DataDevice.hpp>
+#include <hyprland/src/protocols/core/Seat.hpp>
 #include <map>
 #include <nlohmann/json.hpp>
 #include <set>
@@ -28,11 +33,11 @@ struct Lease {
   PHLWINDOWREF window;
   WP<CWLSurfaceResource> surface;
   Clock::time_point until;
-  std::set<uint32_t> keys, buttons;
 };
 static std::map<std::string, Lease> leases;
 struct Peer {
   int fd;
+  pid_t pid;
   wl_event_source *event;
   std::string data;
 };
@@ -56,49 +61,28 @@ static bool locked() {
   return !g_pCompositor->m_sessionActive ||
          g_pSessionLockManager->isSessionLocked();
 }
-static void release(Lease &l) {
-  auto surf = l.surface.lock();
-  if (surf) {
-    if (g_pSeatManager->m_state.keyboardFocus.lock() == surf) {
-      for (auto k : l.keys)
-        g_pSeatManager->sendKeyboardKey(millis(), k,
-                                        WL_KEYBOARD_KEY_STATE_RELEASED);
-      if (!l.keys.empty())
-        g_pSeatManager->sendKeyboardMods(0, 0, 0, 0);
-    }
-    if (g_pSeatManager->m_state.pointerFocus.lock() == surf) {
-      for (auto b : l.buttons)
-        g_pSeatManager->sendPointerButton(millis(), b,
-                                          WL_POINTER_BUTTON_STATE_RELEASED);
-      g_pSeatManager->sendPointerFrame();
-    }
-  }
-  l.keys.clear();
-  l.buttons.clear();
-}
-static void clear() {
-  for (auto &[id, l] : leases)
-    release(l);
-  leases.clear();
-}
+#include "input_transaction.hpp"
+
+static void clear() { leases.clear(); }
 static void expire() {
   for (auto it = leases.begin(); it != leases.end();) {
     if (locked() || Clock::now() >= it->second.until || !it->second.window ||
         !it->second.window->m_isMapped ||
         it->second.surface.lock() != it->second.window->resource()) {
-      release(it->second);
       it = leases.erase(it);
     } else
       ++it;
   }
 }
-static json execute(const json &q) {
+static json execute(const json &q, pid_t owner) {
   expire();
   auto op = q.value("op", "");
   if (op == "status")
     return {{"ok", true},
             {"backend", "hyprland-compositor"},
-            {"version", 1},
+            {"version", 2},
+            {"focus_preserving", true},
+            {"input_faulted", inputFaulted},
             {"leases", leases.size()},
             {"locked", locked()}};
   if (op == "clear") {
@@ -109,12 +93,13 @@ static json execute(const json &q) {
   if (op == "revoke") {
     auto it = leases.find(token);
     if (it != leases.end()) {
-      release(it->second);
       leases.erase(it);
     }
     return {{"ok", true}};
   }
   if (op == "authorize") {
+    if (inputFaulted)
+      throw std::runtime_error("input_restore_failed_reload_plugin");
     if (locked())
       throw std::runtime_error("session_locked");
     if (token.size() < 20 || token.size() > 128 || leases.size() >= 64)
@@ -127,10 +112,8 @@ static json execute(const json &q) {
     int ms = q.value("milliseconds", 0);
     if (ms < 1 || ms > 3600000)
       throw std::runtime_error("invalid_duration");
-    if (leases.contains(token))
-      release(leases.at(token));
-    leases[token] = {
-        w, w->resource(), Clock::now() + std::chrono::milliseconds(ms), {}, {}};
+    leases[token] = {w, w->resource(),
+                     Clock::now() + std::chrono::milliseconds(ms)};
     return {{"ok", true}};
   }
   auto it = leases.find(token);
@@ -139,8 +122,7 @@ static json execute(const json &q) {
   auto &l = it->second;
   auto w = l.window.lock();
   if (op == "release") {
-    release(l);
-    return {{"ok", true}};
+    return {{"ok", true}}; // no synthetic state survives a transaction
   }
   if (!w || !w->m_isMapped || w->resource() != l.surface.lock())
     throw std::runtime_error("target_closed");
@@ -151,87 +133,68 @@ static json execute(const json &q) {
   auto surf = w->resource();
   if (!surf)
     throw std::runtime_error("target_surface_missing");
-  // Direct seat delivery runs on the compositor event loop. Never a global
-  // virtual-input fallback. Root toplevel only: transient toplevels need
-  // independent grants; popup interaction is not claimed.
+  // Only an explicit focus request changes desktop activation. Ordinary
+  // input borrows protocol focus within one event-loop callback and restores
+  // it.
   if (op == "focus") {
+    requireIdleInput();
     Desktop::focusState()->fullWindowFocus(w, Desktop::FOCUS_REASON_OTHER,
                                            surf);
-  } else if (op == "pointer") {
+  } else if (op == "key_transaction") {
+    uint32_t key = q.value("key", 0u), mods = q.value("mods", 0u);
+    if (key > 255 || mods > 255)
+      throw std::runtime_error("invalid_key");
+    auto agent = agentKeyboard(owner);
+    InputTransaction transaction(surf, false);
+    transaction.borrowKeyboard(agent);
+    transaction.key(key, mods);
+    transaction.finish();
+  } else if (op == "pointer_transaction") {
+    const auto kind = q.value("kind", "");
+    if (kind != "move" && kind != "click" && kind != "scroll" && kind != "drag")
+      throw std::runtime_error("invalid_pointer_transaction");
+    const auto box = w->getWindowMainSurfaceBox();
+    const auto valid = [&](double x, double y) {
+      return std::isfinite(x) && std::isfinite(y) && x >= 0 && y >= 0 &&
+             x < box.w && y < box.h;
+    };
     double x = q.value("x", -1.0), y = q.value("y", -1.0);
-    auto box = w->getWindowMainSurfaceBox();
-    if (!std::isfinite(x) || !std::isfinite(y) || x < 0 || y < 0 ||
-        x >= box.w || y >= box.h)
-      throw std::runtime_error("outside_window");
-    Desktop::focusState()->fullWindowFocus(w, Desktop::FOCUS_REASON_OTHER,
-                                           surf);
-    // A virtual pointer supplies seat capability, not global event injection.
-    // Local virtual devices are trusted; never borrow a physical device here.
-    SP<IPointer> pointer;
-    for (const auto &p : g_pInputManager->m_pointers)
-      if (p->isVirtual()) {
-        pointer = p;
-        break;
-      }
-    if (!pointer)
-      throw std::runtime_error("pointer_not_ready");
-    g_pSeatManager->setMouse(pointer);
-    Pointer::mgr()->warpTo({box.x + x, box.y + y});
-    g_pSeatManager->setPointerFocus(surf, {x, y});
-    if (g_pSeatManager->m_state.pointerFocus.lock() != surf)
-      throw std::runtime_error("pointer_focus_refused");
-    g_pSeatManager->sendPointerMotion(millis(), {x, y});
-    auto state = q.value("button_state", "");
+    double toX = q.value("to_x", x), toY = q.value("to_y", y);
     uint32_t button = q.value("button", 272u);
-    if (state == "down" || state == "up") {
-      if (button < 272 || button > 274)
-        throw std::runtime_error("invalid_button");
-      g_pSeatManager->sendPointerButton(millis(), button,
-                                        state == "down"
-                                            ? WL_POINTER_BUTTON_STATE_PRESSED
-                                            : WL_POINTER_BUTTON_STATE_RELEASED);
-      if (state == "down")
-        l.buttons.insert(button);
-      else
-        l.buttons.erase(button);
-    }
-    if (q.contains("scroll")) {
-      double delta = q["scroll"];
-      if (!std::isfinite(delta) || std::abs(delta) > 1200)
-        throw std::runtime_error("invalid_scroll");
+    double delta = q.value("scroll", 0.0);
+    if (!valid(x, y) || !valid(toX, toY))
+      throw std::runtime_error("outside_window");
+    if (button < 272 || button > 274)
+      throw std::runtime_error("invalid_button");
+    if (!std::isfinite(delta) || std::abs(delta) > 1200)
+      throw std::runtime_error("invalid_scroll");
+    if (q.value("duration_ms", 0) != 0)
+      throw std::runtime_error("timed_drag_unsupported_use_duration_zero");
+    // Validate everything above before sending even a pointer enter.
+    InputTransaction transaction(surf, true);
+    transaction.borrowPointer({x, y});
+    transaction.motion({x, y});
+    if (kind == "click" || kind == "drag") {
+      transaction.button(button, true);
+      if (kind == "drag") {
+        // Bounded burst, no sleep/dispatch with a button held or focus
+        // borrowed.
+        for (int i = 1; i <= 20; ++i) {
+          const double t = i / 20.0;
+          transaction.motion({x + (toX - x) * t, y + (toY - y) * t});
+        }
+      }
+      transaction.button(button, false);
+    } else if (kind == "scroll") {
       g_pSeatManager->sendPointerAxis(
           millis(), WL_POINTER_AXIS_VERTICAL_SCROLL, delta, 0,
           (int)(delta * 12), WL_POINTER_AXIS_SOURCE_WHEEL,
           WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL);
+      g_pSeatManager->sendPointerFrame();
     }
-    g_pSeatManager->sendPointerFrame();
-  } else if (op == "key") {
-    if (!g_pSeatManager->m_keyboard)
-      throw std::runtime_error("keyboard_not_ready");
-    uint32_t key = q.value("key", 0u), mods = q.value("mods", 0u);
-    if (key > 255 || mods > 255)
-      throw std::runtime_error("invalid_key");
-    Desktop::focusState()->fullWindowFocus(w, Desktop::FOCUS_REASON_OTHER,
-                                           surf);
-    g_pSeatManager->setKeyboardFocus(surf);
-    if (g_pSeatManager->m_state.keyboardFocus.lock() != surf)
-      throw std::runtime_error("keyboard_focus_refused");
-    g_pSeatManager->sendKeyboardMods(mods, 0, 0, 0);
-    bool down = q.value("down", true);
-    g_pSeatManager->sendKeyboardKey(millis(), key,
-                                    down ? WL_KEYBOARD_KEY_STATE_PRESSED
-                                         : WL_KEYBOARD_KEY_STATE_RELEASED);
-    if (down)
-      l.keys.insert(key);
-    else {
-      l.keys.erase(key);
-      if (l.keys.empty())
-        g_pSeatManager->sendKeyboardMods(0, 0, 0, 0);
-    }
-  } else if (op == "release") {
-    release(l);
+    transaction.finish();
   } else
-    throw std::runtime_error("unknown_operation");
+    throw std::runtime_error("unknown_operation_update_broker_and_plugin");
   return {{"ok", true}, {"revision", revision(w)}};
 }
 static void closePeer(Peer *p) {
@@ -262,7 +225,7 @@ static int readPeer(int fd, uint32_t mask, void *data) {
     return 0;
   json out;
   try {
-    out = execute(json::parse(p->data));
+    out = execute(json::parse(p->data), p->pid);
   } catch (const std::exception &e) {
     out = {{"ok", false}, {"error", e.what()}};
   }
@@ -282,7 +245,7 @@ static int acceptPeer(int fd, uint32_t, void *) {
     close(c);
     return 0;
   }
-  auto *p = new Peer{c, nullptr, {}};
+  auto *p = new Peer{c, cred.pid, nullptr, {}};
   p->event = wl_event_loop_add_fd(g_pCompositor->m_wlEventLoop, c,
                                   WL_EVENT_READABLE, readPeer, p);
   peers.insert(p);
@@ -320,7 +283,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE h) {
   wl_event_source_timer_update(timerEvent, 50);
   return {"computer-use-guard",
           "Window-scoped seat delivery for the Computer Use broker",
-          "Computer Use", "0.1.0"};
+          "Computer Use", "0.2.0"};
 }
 APICALL EXPORT void PLUGIN_EXIT() {
   clear();

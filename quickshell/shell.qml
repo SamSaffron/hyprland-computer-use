@@ -10,6 +10,7 @@ import Quickshell.Services.SystemTray
 ShellRoot {
     id: root
     property var state: ({mode:"approve", paused:false, requests:[], grants:[], audit:[], recordings:[], open:0})
+    property var targetIDs: []
     property bool openPanel: true
     property string lastError: ""
     property bool confirmYolo: false
@@ -32,6 +33,10 @@ ShellRoot {
             onRead: data => {
                 try {
                     let s=JSON.parse(data); root.state=s;
+                    // Variants must be keyed by stable window IDs, not the
+                    // changing marker objects (whose countdown ticks each second).
+                    let ids=(s.targets || []).map(t => t.window.id).sort();
+                    if(JSON.stringify(ids)!==JSON.stringify(root.targetIDs)) root.targetIDs=ids;
                     if(s.error) root.lastError=s.error;
                     if(s.open!==root.lastOpen) { root.lastOpen=s.open; root.openPanel=true; }
                 } catch(e) { console.warn("Invalid broker state", e); }
@@ -86,19 +91,21 @@ ShellRoot {
         }
     }
     Variants {
-        model: root.state.targets || []
+        model: root.targetIDs
         PanelWindow {
-            required property var modelData
-            screen: Quickshell.screens.find(s => modelData.window.at[0]>=s.x && modelData.window.at[0]<s.x+s.width && modelData.window.at[1]>=s.y && modelData.window.at[1]<s.y+s.height) || Quickshell.screens[0]
+            required property string modelData
+            property var target: (root.state.targets || []).find(t => t.window.id===modelData)
+                || {window:{at:[0,0],size:[0,0]},label:"",remaining_seconds:0}
+            screen: Quickshell.screens.find(s => target.window.at[0]>=s.x && target.window.at[0]<s.x+s.width && target.window.at[1]>=s.y && target.window.at[1]<s.y+s.height) || Quickshell.screens[0]
             anchors { top:true; left:true }
-            margins { left:Math.max(0,modelData.window.at[0]-screen.x);top:Math.max(0,modelData.window.at[1]-screen.y) }
-            implicitWidth:modelData.window.size[0];implicitHeight:modelData.window.size[1]
+            margins { left:Math.max(0,target.window.at[0]-screen.x);top:Math.max(0,target.window.at[1]-screen.y) }
+            implicitWidth:target.window.size[0];implicitHeight:target.window.size[1]
             exclusionMode:ExclusionMode.Ignore;color:"transparent";mask:Region {}
             WlrLayershell.namespace:"computer-use-target"
             WlrLayershell.layer:WlrLayer.Overlay
             Rectangle { anchors.fill:parent;color:"transparent";border.width:3;border.color:root.accent;radius:3 }
             Rectangle { anchors.top:parent.top;anchors.horizontalCenter:parent.horizontalCenter;width:markerText.implicitWidth+20;height:23;color:root.accent;radius:4
-                Text { id:markerText;anchors.centerIn:parent;text:modelData.label+(modelData.remaining_seconds?" · "+modelData.remaining_seconds+"s":"");color:"#10251e";font.pixelSize:10;font.bold:true;textFormat:Text.PlainText }
+                Text { id:markerText;anchors.centerIn:parent;text:target.label+(target.remaining_seconds?" · "+target.remaining_seconds+"s":"");color:"#10251e";font.pixelSize:10;font.bold:true;textFormat:Text.PlainText }
             }
         }
     }

@@ -155,7 +155,7 @@ func (b *Broker) newMCPServer(id string, opts *mcp.ServerOptions) *mcp.Server {
 		text, _ := json.Marshal(meta)
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(text)}, &mcp.ImageContent{Data: data, MIMEType: "image/png"}}}, nil, nil
 	})
-	tool(s, "input_window", "Perform bounded mouse/key/text actions against one root toplevel through the compositor guard. Mandatory revision rejects stale geometry. No global fallback; no compositor shortcuts.", func(ctx context.Context, a InputArgs) (any, error) { return b.input(ctx, id, a) })
+	tool(s, "input_window", "Perform bounded mouse/key/text transactions against one permitted root toplevel. Ordinary input restores the user's focus and does not warp the cursor; explicit focus intentionally activates the window. Drag duration_ms must be omitted or 0 (atomic path). Held user input or unsafe grabs cause refusal. Errors may follow partial progress; re-observe before retrying. Mandatory revision rejects stale geometry. No global fallback; no compositor shortcuts.", func(ctx context.Context, a InputArgs) (any, error) { return b.input(ctx, id, a) })
 	tool(s, "record_window", "Start a local, window-only MP4 recording. Separate record permission required. Stops on revoke, expiry, disconnect or 10-minute cap.", func(ctx context.Context, a struct {
 		Window string `json:"window_id"`
 	}) (any, error) {

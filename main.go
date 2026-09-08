@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -18,13 +17,43 @@ import (
 
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: hyprland-computer-use serve | mcp | share [--client ID] [--seconds 300] [--view-only] | ui '{\"op\":\"state\"}'")
+		return errors.New("usage: hyprland-computer-use setup [--build-only] | serve | stop | console | keyboard | mcp | share [--client ID] [--seconds 300] [--view-only] | ui '{\"op\":\"state\"}'")
+	}
+	// Setup can build offline, without a running desktop or runtime socket.
+	if os.Args[1] == "setup" {
+		return runSetup(os.Args[2:])
+	}
+	if os.Args[1] == "console" {
+		return runConsole(os.Args[2:])
+	}
+	if os.Args[1] == "keyboard" {
+		return runKeyboard(os.Args[2:])
 	}
 	dir, e := runtimeDir()
 	if e != nil {
 		return e
 	}
 	switch os.Args[1] {
+	case "stop":
+		f := flag.NewFlagSet("stop", flag.ContinueOnError)
+		if e = f.Parse(os.Args[2:]); e != nil {
+			return e
+		}
+		if f.NArg() != 0 {
+			return errors.New("stop accepts no arguments")
+		}
+		p, err := findBroker(dir)
+		if err != nil {
+			return err
+		}
+		if p == nil {
+			fmt.Fprintln(os.Stderr, "No broker is running.")
+			return nil
+		}
+		defer p.close()
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		return p.stop(ctx)
 	case "mcp":
 		f := flag.NewFlagSet("mcp", flag.ContinueOnError)
 		socket := f.String("socket", filepath.Join(dir, "mcp.sock"), "broker MCP socket")
@@ -33,7 +62,7 @@ func run() error {
 		}
 		c, e := net.Dial("unix", *socket)
 		if e != nil {
-			return e
+			return brokerConnectionError(*socket, e)
 		}
 		defer c.Close()
 		go func() {
@@ -105,8 +134,6 @@ func run() error {
 		oauth := f.Bool("oauth", false, "enable built-in OAuth provider with local desktop approval (requires --http)")
 		cert := f.String("tls-cert", "", "PEM certificate for direct HTTPS")
 		key := f.String("tls-key", "", "PEM private key for direct HTTPS")
-		exe, _ := os.Executable()
-		keyboard := f.String("keyboard", filepath.Join(filepath.Dir(exe), "computer-use-keyboard"), "persistent US-layout keyboard helper")
 		stateHome := os.Getenv("XDG_STATE_HOME")
 		if stateHome == "" {
 			home, _ := os.UserHomeDir()
@@ -116,6 +143,18 @@ func run() error {
 		if e = f.Parse(os.Args[2:]); e != nil {
 			return e
 		}
+		readyFile, e := brokerReadyFile()
+		if e != nil {
+			return e
+		}
+		if readyFile != nil {
+			defer readyFile.Close()
+		}
+		brokerLock, e := lifecycleLock(filepath.Join(dir, "broker.lock"))
+		if e != nil {
+			return e
+		}
+		defer brokerLock.Close()
 		if *httpAddr == "" && (*oauth || *publicURL != "" || *cert != "" || *key != "") {
 			return errors.New("HTTP/OAuth options require --http")
 		}
@@ -134,14 +173,13 @@ func run() error {
 		defer cancel()
 		d := &Desktop{dir, *data}
 		if e = d.guard(ctx, map[string]any{"op": "status"}); e != nil {
-			return e
+			return guardStartupError(e)
 		}
-		helper := exec.CommandContext(ctx, *keyboard)
-		helper.Stderr = os.Stderr
-		if e = helper.Start(); e != nil {
-			return e
+		devices, e := startWaylandDevices(ctx)
+		if e != nil {
+			return fmt.Errorf("keyboard/pointer initialization failed: %w", e)
 		}
-		defer func() { _ = helper.Process.Kill(); _ = helper.Wait() }()
+		defer devices.Close()
 		ui, e := listenUnix(filepath.Join(dir, "ui.sock"))
 		if e != nil {
 			return e
@@ -173,7 +211,9 @@ func run() error {
 			fmt.Fprintln(os.Stderr, "HTTP MCP:", *httpAddr, "OAuth:", *oauth)
 		}
 		go b.maintenance(ctx)
-		go b.runTray(ctx)
+		trayDone := make(chan struct{})
+		go func() { defer close(trayDone); b.runTray(ctx) }()
+		defer func() { cancel(); <-trayDone }()
 		go func() {
 			for {
 				c, e := ui.Accept()
@@ -193,8 +233,22 @@ func run() error {
 			}
 		}()
 		fmt.Fprintln(os.Stderr, "Computer Use ready; approve mode. MCP:", filepath.Join(dir, "mcp.sock"))
-		<-ctx.Done()
-		return nil
+		if readyFile != nil {
+			if _, e = io.WriteString(readyFile, "ready\n"); e != nil {
+				return e
+			}
+			_ = readyFile.Close()
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case err := <-devices.done:
+			if ctx.Err() != nil {
+				return nil
+			}
+			cancel()
+			return fmt.Errorf("keyboard/pointer connection lost; stopping broker: %w", err)
+		}
 	default:
 		return errors.New("unknown command")
 	}

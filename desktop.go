@@ -101,14 +101,25 @@ func (d *Desktop) guard(ctx context.Context, q map[string]any) error {
 		return e
 	}
 	var r struct {
-		OK    bool   `json:"ok"`
-		Error string `json:"error"`
+		OK              bool   `json:"ok"`
+		Error           string `json:"error"`
+		Version         int    `json:"version"`
+		FocusPreserving bool   `json:"focus_preserving"`
+		InputFaulted    bool   `json:"input_faulted"`
 	}
 	if e = json.NewDecoder(io.LimitReader(c, 16384)).Decode(&r); e != nil {
 		return e
 	}
 	if !r.OK {
 		return errors.New(r.Error)
+	}
+	if q["op"] == "status" {
+		if r.Version != 2 || !r.FocusPreserving {
+			return errors.New("guard_protocol_mismatch: run `hyprland-computer-use setup` to replace the loaded guard automatically")
+		}
+		if r.InputFaulted {
+			return errors.New("input_restore_failed: run `hyprland-computer-use setup` to repair the compositor guard")
+		}
 	}
 	return nil
 }
@@ -158,7 +169,7 @@ type Action struct {
 	Delta      float64 `json:"delta,omitempty"`
 	Key        string  `json:"key,omitempty" jsonschema:"e.g. ENTER, CTRL+L, ALT+LEFT; SUPER/global compositor shortcuts are not supported"`
 	Text       string  `json:"text,omitempty"`
-	DurationMS int     `json:"duration_ms,omitempty"`
+	DurationMS int     `json:"duration_ms,omitempty" jsonschema:"For drag omit or use 0: focus-preserving drags are bounded atomic paths; timed drags are unsupported"`
 }
 
 func keySpec(name string) (uint32, uint32, error) {
@@ -278,6 +289,9 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (any, er
 		if ac.DurationMS < 0 || ac.DurationMS > 5000 {
 			return nil, errors.New("duration must be 0–5000ms")
 		}
+		if ac.Type == "drag" && ac.DurationMS != 0 {
+			return nil, errors.New("timed drag is unsupported in focus-preserving mode; omit duration_ms or use 0 for a bounded atomic drag")
+		}
 		if ac.Button != "" && ac.Button != "left" && ac.Button != "right" && ac.Button != "middle" {
 			return nil, errors.New("invalid button")
 		}
@@ -302,7 +316,6 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (any, er
 		}
 		defer b.backend.guard(context.Background(), map[string]any{"op": "revoke", "token": token})
 	}
-	defer b.backend.guard(context.Background(), map[string]any{"op": "release", "token": token, "revision": a.Revision})
 	check := func() error {
 		if e := ctx.Err(); e != nil {
 			return e
@@ -324,19 +337,8 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (any, er
 		q["revision"] = a.Revision
 		return b.backend.guard(ctx, q)
 	}
-	pointer := func(x, y float64, state string, button uint32, scroll float64) error {
-		q := map[string]any{"op": "pointer", "x": x, "y": y, "button_state": state, "button": button}
-		if scroll != 0 {
-			q["scroll"] = scroll
-		}
-		return send(q)
-	}
 	key := func(c, mods uint32) error {
-		if e := send(map[string]any{"op": "key", "key": c, "mods": mods, "down": true}); e != nil {
-			return e
-		}
-		time.Sleep(12 * time.Millisecond)
-		return send(map[string]any{"op": "key", "key": c, "mods": mods, "down": false})
+		return send(map[string]any{"op": "key_transaction", "key": c, "mods": mods})
 	}
 	for i, ac := range a.Actions {
 		button := uint32(272)
@@ -349,30 +351,18 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (any, er
 		switch ac.Type {
 		case "focus":
 			e = send(map[string]any{"op": "focus"})
-		case "move":
-			e = pointer(ac.X, ac.Y, "", button, 0)
-		case "scroll":
-			e = pointer(ac.X, ac.Y, "", button, ac.Delta)
-		case "click":
-			e = pointer(ac.X, ac.Y, "down", button, 0)
-			if e == nil {
-				time.Sleep(65 * time.Millisecond)
-				e = pointer(ac.X, ac.Y, "up", button, 0)
+		case "move", "scroll", "click", "drag":
+			q := map[string]any{
+				"op": "pointer_transaction", "kind": ac.Type,
+				"x": ac.X, "y": ac.Y, "button": button,
 			}
-		case "drag":
-			e = pointer(ac.X, ac.Y, "down", button, 0)
-			steps := max(2, ac.DurationMS/16)
-			if ac.DurationMS == 0 {
-				steps = 20
+			if ac.Type == "drag" {
+				q["to_x"], q["to_y"] = ac.ToX, ac.ToY
 			}
-			for j := 1; j <= steps && e == nil; j++ {
-				t := float64(j) / float64(steps)
-				e = pointer(ac.X+(ac.ToX-ac.X)*t, ac.Y+(ac.ToY-ac.Y)*t, "", button, 0)
-				time.Sleep(16 * time.Millisecond)
+			if ac.Type == "scroll" {
+				q["scroll"] = ac.Delta
 			}
-			if e == nil {
-				e = pointer(ac.ToX, ac.ToY, "up", button, 0)
-			}
+			e = send(q)
 		case "key":
 			c, mods, _ := keySpec(ac.Key)
 			e = key(c, mods)

@@ -10,6 +10,56 @@ This is evidence from one disposable configuration, not a general security audit
 - The lab's Aquamarine **0.15.0** build has local nested-backend compatibility patches (xdg_wm_base version clamp and backend-supported buffer modifiers). This was not a stock physical-monitor deployment.
 - Persistent helper supplies a US virtual keyboard and virtual pointer. Guard built against the exact running compositor's headers.
 
+## Automatic local setup repair — 8 September
+
+**Current usage:** `hyprland-computer-use setup` builds, repairs the loaded guard, and restarts an existing broker. Use `setup --build-only` for offline compilation. Earlier entries below used the former meaning of plain `setup` (build-only).
+
+Repair tests use mocked compositor operations and cover exact-path discovery, temporary-inspector cleanup, build-before-disruption, stop/unload/load/readiness/publication/restart ordering, failed unloads (including hyprctl errors with exit status 0), failed loads/readiness/publication, wrong-session sockets, and config-managed guards. Process tests use only test-owned children to check pidfd-based graceful stopping, restart readiness, preserved working directory/environment, private logs, and refusal to stop an unrelated socket owner. Lifecycle locks are checked for exclusion.
+
+The temporary read-only inspector compiles against the exact **Hyprland 0.56.2** headers. No live plugin hot-swap or real desktop broker restart was performed in this session. Real repair still needs a disposable-session check, particularly compositor permissions/config reload behavior, legacy broker detection, HTTP/OAuth option preservation, and MCP/UI reconnection. Setup does not install or manage host services and does not preserve grants.
+
+## Single-distributable setup — 8 September
+
+The Go binary now embeds native build inputs and the Quickshell console. Automated tests cover byte-for-byte extraction, helper lookup, failed-build rollback, retained old plugin builds, commit-mismatch refusal before plugin loading, refusal to replace a listening guard, and console launch/temporary-file cleanup with a mocked Quickshell executable.
+
+`go test -race ./...`, `go vet ./...`, and the `CGO_ENABLED=0` executable build passed. A copied executable was run from a separate scratch directory with the desktop environment variables unset and a scratch `XDG_DATA_HOME`. Plain `setup` successfully compiled the embedded plugin, keyboard/pointer helper, and version probe without reading a source checkout. The probe reported the lab header commit `efb50993780079460b0cbed1363e2166a2de1d9f` (Hyprland 0.56.2).
+
+This setup check did **not** load a plugin, launch real Quickshell, install system packages, or start host services. The new `setup --load` orchestration and bundled-console launcher have automated coverage, not a new live-desktop verification. The earlier live checks below concern the existing native code and console behavior.
+
+## Tray icon and activation — 8 September
+
+The tray now uses transparent, antialiased monitor-and-pointer pixmaps at 16, 22, 32, 48 and 64 pixels. Left-click opens the local console, launching bundled QML through Quickshell if no supervisor is connected. A DBusMenu exposes **Open permission console** for hosts that use a menu rather than calling `ContextMenu`.
+
+Unit/race checks cover coalescing repeated clicks, reusing an existing supervisor, console cancellation, menu layout/events, ARGB pixmap shape, and unchanged pause/approval authority. An isolated `dbus-run-session -- env COMPUTER_USE_TEST_DBUS=1 go test -race -run TestTrayPrivateBus -v .` passed real D-Bus layout decoding, menu click dispatch, and SNI activation without touching the desktop bus. The icon preview was visually inspected. This is not a new live Waybar/Quickshell click test; host-specific popup positioning and real console startup from the tray remain to be checked in the disposable lab.
+
+## Built-in keyboard and stable outlines — 8 September
+
+The separate C `computer-use-keyboard` helper has been removed. `serve` now owns a Go Wayland client, and the optional `keyboard` diagnostic subcommand runs that same implementation. It creates the virtual devices and sends a self-contained, sealed US-ASCII keymap; it has no key, motion, or button injection path. Readiness requires a compositor roundtrip after keymap delivery; required-global removal or connection failure stops the broker. Multiple seats are explicitly unsupported. The earlier live checks below used the former C helper and do **not** constitute live validation of this replacement.
+
+The Go race tests exercise a fake compositor over real Unix stream sockets, including exact device-creation messages, `SCM_RIGHTS` transfer and sealed keymap contents, no requests after readiness, missing-interface rejection, malformed framing, protocol errors, seat removal, and cancellation. A copied standalone binary also completed `setup` in scratch storage against the lab's Hyprland 0.56.2 headers, producing the plugin and version probe with **no keyboard executable**. `file` confirmed that the Go binary is statically linked. No plugin was loaded for this check. `COMPUTER_USE_TEST_XKB=1 go test -run TestKeyboardKeymapXKB -v .` additionally passed against the installed libxkbcommon parser: all printable US-ASCII characters, sampled special keys, and the guard's modifier indices were checked. This parser is a test dependency only; the Go binary remains `CGO_ENABLED=0`.
+
+Target overlays are now keyed by stable window IDs rather than marker objects containing changing countdowns. `COMPUTER_USE_TEST_QML=1 go test -run TestOutlineDelegateStability -v .` passed with real Quickshell Variants on offscreen Qt and a private D-Bus/runtime: countdown and geometry updates kept the same delegate, and revocation destroyed it. It uses the production model/binding snippets with QtObject delegates, not live compositor surfaces. `qmllint quickshell/shell.qml` passed. Live input delivery with the replacement Go devices and live visual confirmation of the outline fix remain unverified.
+
+## Focus-preserving input prototype — 8 September
+
+Guard protocol 2 replaces split key/button operations with complete compositor-thread transactions. Ordinary input no longer calls `fullWindowFocus` or warps the cursor. The guard borrows protocol focus, releases synthetic keys/buttons, restores the previous keyboard/pointer device, focus and keyboard modifiers, then returns. Keyboard switching temporarily broadcasts keymap changes, and applications still observe focus leave/enter events. Explicit `focus` retains its intentional activation semantics. These are experimental restoration guarantees, not independent seats or invisible input.
+
+The native guard compiled against the exact lab **Hyprland 0.56.2** headers. `make native-test` compiles the actual transaction implementation against a fake compositor API and checks successful keyboard/pointer restoration, modifier preservation, exception cleanup of presses, busy-state refusals, broker-process keyboard selection, missing restoration geometry, and restoration-fault lockout. It does not validate the compositor's or toolkit's side effects. Go tests check complete single-request input transactions, lease/revision propagation, refusal without fallback, full prevalidation of unsupported timed drags, and rejection of old guard protocols. `make test` now requires the native unit tests as well as formatting, vet and Go race checks; it needs a C++23 compiler but not Hyprland headers. These tests also passed with AddressSanitizer/UndefinedBehaviorSanitizer. The bundled-source `setup` build passed in scratch storage without loading a plugin. Hyprland's input-capture header requires the `libeis-1.0` include flags (Arch package `libei`), which setup now checks explicitly.
+
+**Not live-tested:** no new plugin was loaded into the desktop. Earlier live-test results below predate this change. A drag is now a bounded 20-step burst with no compositor sleeps; timed drags are rejected rather than silently approximated. The opt-in `scripts/live-test.py` has been updated to use that mode but has not been rerun.
+
+Before claiming everyday human/agent coexistence, run this acceptance checklist in the disposable compositor (not a personal desktop):
+
+1. Load the rebuilt guard and broker. Put two separate native Wayland applications side by side; keep human keyboard/pointer focus on A and grant the agent only B.
+2. Through real MCP, type a distinctive string and shortcut into B **without a focus action**. Verify actual B content, unchanged A content, unchanged `hyprctl -j activewindow`, and that the next human keystroke still reaches A.
+3. Click, scroll and perform an atomic in-window drag in B. Verify actual B changes, unchanged `hyprctl -j cursorpos` and desktop activation, and that human pointer input still reaches A afterward.
+4. Repeat with held physical modifiers/keys/buttons and active grabs/constraints: input must fail without changing focus or sending partial actions. Repeat with human typing between transactions, Caps Lock and a non-US physical layout; check no lost keys or modifier leakage.
+5. Test same-application windows separately, nullable pointer focus, geometry changes, focus-dependent applications, revocation, target closure and disconnect. Recheck local Pause and stale/window-scope denial. Do not infer correctness for popups, IMEs, cross-window drag-and-drop, cursor-shape requests or mixed-DPI setups from basic success.
+
+## Go quality checks
+
+`make fmt` applies `go fmt ./...`; `make fmt-check` rejects unformatted Go files without rewriting them; `make vet` runs `go vet ./...`. `make test` requires both Go checks and the standalone native transaction unit tests before running `go test -race ./...`. The GitHub Actions Go workflow runs these checks and builds the standalone executable on pushes and pull requests. XKB, offscreen Quickshell, private-bus tray tests, native plugin builds, and live desktop tests remain separately invoked checks rather than assumed CI coverage. Locally, `make fmt`, `make test`, and the static build passed. A scratch-module negative check confirmed that `fmt-check` rejects unformatted code without changing it, then passes after `make fmt`. The hosted workflow has been added but has not been run on GitHub in this session.
+
 ## Automated and live checks
 
 `go test -race ./...`: **35 top-level tests passed** (including proactive-sharing subcases). `go vet ./...`: passed. Native plugin/helper compilation: passed.

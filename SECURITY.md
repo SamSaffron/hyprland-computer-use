@@ -6,6 +6,8 @@ Window metadata (titles, IDs, app, workspace, geometry) is intentionally availab
 
 Local proactive sharing is exposed only through the UI socket/CLI, not MCP. A click binds a timed grant to one existing MCP connection and one snapshot-validated native window. Multiple clients require a recipient choice; no future-client or broadcast grants.
 
+`setup` and `stop` are explicit local administration commands, never MCP tools. Setup may gracefully stop a verified same-user broker, replace the guard, and restart it in approve mode with no inherited grants. Kernel socket credentials, executable/module/argument checks, session checks and pidfds prevent accidental process-name/PID-file targeting; they are not protection against hostile same-UID software. Setup uses a temporary version-matched, read-only inspector plugin to discover actual guard paths. Service-managed brokers and configuration-loaded guards are refused rather than silently overriding their manager. No host service or autostart configuration is installed.
+
 ## Enforced paths
 
 - The default MCP transport is a private Unix socket, reached through a stdio bridge. Optional Streamable HTTP can use the built-in OAuth provider; see [AUTH.md](AUTH.md). It exposes no approve/mode/shell/arbitrary-path tool.
@@ -15,7 +17,8 @@ Local proactive sharing is exposed only through the UI socket/CLI, not MCP. A cl
 - Input is delivered directly to the authorized root surface on the compositor thread, not injected globally after an external focus check. Unavailable guard means no input.
 - Observation uses `grim -T` with the actual foreign-toplevel identifier. It is not output capture cropped by a window rectangle. Opaque Kitty/Pinta capture was tested with another window and the permission panel visible on the same output.
 - Recording is independent of input permission. Revocation/cancellation prevents subsequent capture iterations, checks authorization again before writing captured frames, and finalizes the local video.
-- Held synthetic keys/buttons are tracked and released on explicit release, revocation and expiry where the original target retains focus. A different current focus is never used as a release target.
+- Ordinary input is a complete synchronous transaction: synthetic presses are released and the prior seat focus/device/modifiers restored before returning to the compositor event loop. Cleanup only releases into the transaction's original target. No held synthetic state spans requests; expiry/revocation blocks later transactions but cannot interrupt an already admitted bounded callback.
+- Keyboard/mouse transactions do not invoke desktop activation or cursor warping. An explicitly requested `focus` action intentionally changes desktop activation. Held user input, grabs, constraints and drag-and-drop are conservatively refused rather than silently falling back. A restoration fault disables further guard input until reload.
 
 ## What this does not claim
 
@@ -25,7 +28,7 @@ Local proactive sharing is exposed only through the UI socket/CLI, not MCP. A cl
 - **Compositor compromise resistance.** The guard runs inside Hyprland. Other plugins and compositor bugs can defeat it. The Quickshell border is useful feedback, not an unspoofable compositor-owned secure-attention surface.
 - **Capture confidentiality for every renderer effect.** Transparent/blurred windows, protected content and all renderer paths need further auditing. Successful opaque-window tests do not establish these properties.
 - **Retroactive revocation.** Previously delivered pixels or recorded bytes cannot be recalled. An already executed application operation cannot be undone by revoking its grant.
-- **Full device arbitration.** US ASCII typing is supported in the tested configuration. Mixed layouts, physical input interleaving, lock-screen transitions and multiple seats/outputs require broader testing.
+- **Full device arbitration or invisible background input.** Focus preservation is experimental, not a second seat. Clients receive temporary protocol focus transitions and keyboard keymap changes; same-application windows, focus-dependent UIs, cursor-shape requests, mixed layouts, physical input interleaving and lock transitions need live testing. Pointer geometry restoration is refused when the previous surface cannot be mapped. Long/timed drags, compositor drag-and-drop, durable hover and IME grabs are unsupported. Earlier live input evidence predates these transactions.
 - **Resource-exhaustion hardening.** Basic per-request, action, peer, recording-count and duration limits exist. This is not yet a hardened multi-tenant daemon; disk retention/quota administration remains the owner's responsibility.
 
 ## Fail-closed behavior to preserve
