@@ -1,7 +1,5 @@
 # Hyprland Computer Use
 
-**Status: experimental / alpha. Use disposable windows first.**
-
 Let an MCP agent view and control **windows you approve**, with a local Quickshell permission console and tray icon. Access starts denied; you choose the windows and duration, and can pause or revoke it.
 
 With seat-aware applications, the agent can work in its approved window **while you keep typing and using the mouse in yours**.
