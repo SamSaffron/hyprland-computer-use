@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
 #include <filesystem>
 #include <hyprland/src/Compositor.hpp>
@@ -19,8 +20,8 @@
 #include <hyprland/src/protocols/core/DataDevice.hpp>
 #include <hyprland/src/protocols/core/Seat.hpp>
 #include <map>
+#include <memory>
 #include <nlohmann/json.hpp>
-#include <set>
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -40,12 +41,20 @@ struct Lease {
 };
 static std::map<std::string, Lease> leases;
 struct Peer {
-  int fd;
-  pid_t pid;
-  wl_event_source *event;
+  int fd = -1;
+  pid_t pid = 0;
+  wl_event_source *event = nullptr;
   std::string data;
+  ~Peer() {
+    if (event)
+      wl_event_source_remove(event);
+    if (fd >= 0)
+      close(fd);
+  }
 };
-static std::set<Peer *> peers;
+// The event loop is single-threaded. Callbacks borrow a pointer; the registry
+// alone owns peers and removes their event source before destroying them.
+static std::map<Peer *, std::unique_ptr<Peer>> peers;
 static uint32_t millis() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
              Clock::now().time_since_epoch())
@@ -339,10 +348,7 @@ static json execute(const json &q, pid_t owner) {
   return {{"ok", true}, {"revision", revision(w)}, {"input_mode", inputMode}};
 }
 static void closePeer(Peer *p) {
-  wl_event_source_remove(p->event);
-  close(p->fd);
   peers.erase(p);
-  delete p;
 }
 static int readPeer(int fd, uint32_t mask, void *data) {
   auto *p = (Peer *)data;
@@ -353,36 +359,40 @@ static int readPeer(int fd, uint32_t mask, void *data) {
   char b[4096];
   auto n = read(fd, b, sizeof(b));
   if (n <= 0) {
-    if (n == 0)
+    if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR))
       closePeer(p);
     return 0;
   }
-  p->data.append(b, n);
-  if (p->data.size() > 16384) {
-    closePeer(p);
-    return 0;
-  }
-  if (p->data.find('\n') == std::string::npos)
-    return 0;
-  json out;
-  bool textRequest = false;
   try {
-    const auto q = json::parse(p->data);
-    textRequest =
-        q.is_object() && q.contains("op") && q["op"] == "text_transaction";
-    out = execute(q, p->pid);
-  } catch (const TextFailure &e) {
-    out = {{"ok", false},
-           {"error", e.what()},
-           {"completed_characters", e.completed}};
-  } catch (const std::exception &e) {
-    out = {{"ok", false}, {"error", e.what()}};
-    if (textRequest)
-      out["completed_characters"] = 0;
+    p->data.append(b, n);
+    if (p->data.size() > 16384) {
+      closePeer(p);
+      return 0;
+    }
+    if (p->data.find('\n') == std::string::npos)
+      return 0;
+    json out;
+    bool textRequest = false;
+    try {
+      const auto q = json::parse(p->data);
+      textRequest =
+          q.is_object() && q.contains("op") && q["op"] == "text_transaction";
+      out = execute(q, p->pid);
+    } catch (const TextFailure &e) {
+      out = {{"ok", false},
+             {"error", e.what()},
+             {"completed_characters", e.completed}};
+    } catch (const std::exception &e) {
+      out = {{"ok", false}, {"error", e.what()}};
+      if (textRequest)
+        out["completed_characters"] = 0;
+    }
+    out["instance"] = guardInstance;
+    auto text = out.dump() + "\n";
+    send(fd, text.data(), text.size(), MSG_NOSIGNAL);
+  } catch (...) {
+    // Never unwind an allocation/serialization failure through the C event loop.
   }
-  out["instance"] = guardInstance;
-  auto text = out.dump() + "\n";
-  send(fd, text.data(), text.size(), MSG_NOSIGNAL);
   closePeer(p);
   return 0;
 }
@@ -397,10 +407,23 @@ static int acceptPeer(int fd, uint32_t, void *) {
     close(c);
     return 0;
   }
-  auto *p = new Peer{c, cred.pid, nullptr, {}};
-  p->event = wl_event_loop_add_fd(g_pCompositor->m_wlEventLoop, c,
-                                  WL_EVENT_READABLE, readPeer, p);
-  peers.insert(p);
+  // Keep descriptor ownership even if allocation or registry insertion fails.
+  std::unique_ptr<Peer> owner;
+  try {
+    owner = std::make_unique<Peer>();
+    owner->fd = c;
+    owner->pid = cred.pid;
+    auto *p = owner.get();
+    p->event = wl_event_loop_add_fd(g_pCompositor->m_wlEventLoop, c,
+                                    WL_EVENT_READABLE, readPeer, p);
+    if (!p->event)
+      return 0;
+    auto entry = peers.try_emplace(p).first;
+    entry->second = std::move(owner);
+  } catch (...) {
+    if (!owner)
+      close(c);
+  }
   return 0;
 }
 static int tick(void *) {
@@ -446,7 +469,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE h) {
     addr.sun_family = AF_UNIX;
     if (socketPath.size() >= sizeof(addr.sun_path))
       throw std::runtime_error("socket path too long");
-    strcpy(addr.sun_path, socketPath.c_str());
+    std::memcpy(addr.sun_path, socketPath.c_str(), socketPath.size() + 1);
     // The adjacent flock survives a busy event loop and is released by the
     // kernel on compositor exit. Only its owner may reclaim a stale pathname.
     if (unlink(socketPath.c_str()) != 0 && errno != ENOENT)
@@ -485,7 +508,7 @@ static void cleanupGuard() {
   independentSeat.reset();
 #endif
   while (!peers.empty())
-    closePeer(*peers.begin());
+    closePeer(peers.begin()->first);
   if (timerEvent)
     wl_event_source_remove(timerEvent);
   if (serverEvent)

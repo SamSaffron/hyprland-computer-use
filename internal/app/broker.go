@@ -54,47 +54,50 @@ type Marker struct {
 	InputMode string `json:"input_mode"`
 }
 type UIState struct {
-	TrayAnchor       *TrayAnchor       `json:"tray_anchor,omitempty"`
-	OAuthEnabled     bool              `json:"oauth_enabled"`
-	OAuthPending     []OAuthPending    `json:"oauth_pending"`
-	OAuthConnections []OAuthConnection `json:"oauth_connections"`
-	Clients          []UIClient        `json:"clients"`
-	Picker           *SharePicker      `json:"picker,omitempty"`
-	Targets          []Marker          `json:"targets"`
-	Mode             string            `json:"mode"`
-	Paused           bool              `json:"paused"`
-	Connected        bool              `json:"connected"`
-	Requests         []Request         `json:"requests"`
-	Grants           []Grant           `json:"grants"`
-	Audit            []Audit           `json:"audit"`
-	Recordings       []RecordingInfo   `json:"recordings"`
-	Open             uint64            `json:"open"`
-	Backend          string            `json:"backend"`
-	Now              time.Time         `json:"now"`
-	Error            string            `json:"error,omitempty"`
+	RevocationUnconfirmed bool              `json:"revocation_unconfirmed"`
+	TrayAnchor            *TrayAnchor       `json:"tray_anchor,omitempty"`
+	OAuthEnabled          bool              `json:"oauth_enabled"`
+	OAuthPending          []OAuthPending    `json:"oauth_pending"`
+	OAuthConnections      []OAuthConnection `json:"oauth_connections"`
+	Clients               []UIClient        `json:"clients"`
+	Picker                *SharePicker      `json:"picker,omitempty"`
+	Targets               []Marker          `json:"targets"`
+	Mode                  string            `json:"mode"`
+	Paused                bool              `json:"paused"`
+	Connected             bool              `json:"connected"`
+	Requests              []Request         `json:"requests"`
+	Grants                []Grant           `json:"grants"`
+	Audit                 []Audit           `json:"audit"`
+	Recordings            []RecordingInfo   `json:"recordings"`
+	Open                  uint64            `json:"open"`
+	Backend               string            `json:"backend"`
+	Now                   time.Time         `json:"now"`
+	Error                 string            `json:"error,omitempty"`
 }
 type Broker struct {
-	trayAnchor      *TrayAnchor
-	oauth           *OAuthProvider
-	picker          *SharePicker
-	mu              sync.Mutex
-	backendMu       sync.Mutex
-	authority       uint64
-	lastInputWindow string
-	lastInputUntil  time.Time
-	inputMu         sync.Mutex
-	mode            string
-	paused          bool
-	uiCount         int
-	open            uint64
-	clients         map[string]string
-	requests        map[string]*Request
-	grants          map[string]*Grant
-	audit           []Audit
-	backend         *Desktop
-	recordings      map[string]*Recording
-	now             func() time.Time
-	log             *os.File
+	pendingRevocations  map[string]map[string]any
+	nextRevocationRetry time.Time
+	trayAnchor          *TrayAnchor
+	oauth               *OAuthProvider
+	picker              *SharePicker
+	mu                  sync.Mutex
+	backendMu           sync.Mutex
+	authority           uint64
+	lastInputWindow     string
+	lastInputUntil      time.Time
+	inputMu             sync.Mutex
+	mode                string
+	paused              bool
+	uiCount             int
+	open                uint64
+	clients             map[string]string
+	requests            map[string]*Request
+	grants              map[string]*Grant
+	audit               []Audit
+	backend             *Desktop
+	recordings          map[string]*Recording
+	now                 func() time.Time
+	log                 *os.File
 }
 
 var randomReader io.Reader = rand.Reader
@@ -154,7 +157,7 @@ func grantMatches(g *Grant, client, cap string, scope Scope, w *Window) bool {
 	return cap == "observe" && scope.Kind == "window" && g.Scope.Kind == "workspace" && w != nil && fmt.Sprint(w.Workspace.ID) == g.Scope.ID
 }
 func (b *Broker) allowedLocked(client, cap string, s Scope, w *Window) (*Grant, bool) {
-	if b.paused || b.uiCount == 0 {
+	if b.paused || b.uiCount == 0 || len(b.pendingRevocations) > 0 {
 		return nil, false
 	}
 	if b.mode == "yolo" {
@@ -178,6 +181,9 @@ func (b *Broker) permit(client, cap string, s Scope, w *Window, reason string) (
 	}
 	if b.paused {
 		return nil, "", errors.New("paused_by_user")
+	}
+	if len(b.pendingRevocations) > 0 {
+		return nil, "", errors.New("revocation_unconfirmed: waiting for compositor cleanup")
 	}
 	if g, ok := b.allowedLocked(client, cap, s, w); ok {
 		return g, "", nil
@@ -228,7 +234,7 @@ func (b *Broker) decide(id string, seconds int, approve bool) error {
 		b.mu.Unlock()
 		return nil
 	}
-	if b.paused || b.uiCount == 0 || b.mode != "approve" {
+	if b.paused || b.uiCount == 0 || b.mode != "approve" || len(b.pendingRevocations) > 0 {
 		b.mu.Unlock()
 		return errors.New("cannot grant in current state")
 	}
@@ -268,7 +274,7 @@ func (b *Broker) decide(id string, seconds int, approve bool) error {
 
 	b.mu.Lock()
 	current := b.requests[id]
-	stillCurrent := current == r && current.State == "pending" && b.authority == authority && !b.paused && b.uiCount > 0 && b.mode == "approve" && b.now().Before(expires)
+	stillCurrent := current == r && current.State == "pending" && b.authority == authority && !b.paused && len(b.pendingRevocations) == 0 && b.uiCount > 0 && b.mode == "approve" && b.now().Before(expires)
 	if stillCurrent {
 		b.grants[g.ID] = g
 		current.State = "granted"
@@ -278,7 +284,7 @@ func (b *Broker) decide(id string, seconds int, approve bool) error {
 	if !stillCurrent {
 		if authorized {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Second)
-			_ = b.backend.guard(cleanupCtx, map[string]any{"op": "revoke", "token": g.ID})
+			b.cleanupGuard(cleanupCtx, map[string]any{"op": "revoke", "token": g.ID})
 			cleanupCancel()
 		}
 		return errors.New("request changed while grant was being authorized")
@@ -305,7 +311,7 @@ func (b *Broker) revoke(id string) {
 	if g != nil && g.Capability == "control" && b.backend != nil {
 		b.backendMu.Lock()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = b.backend.guard(ctx, map[string]any{"op": "revoke", "token": id})
+		b.cleanupGuard(ctx, map[string]any{"op": "revoke", "token": id})
 		cancel()
 		b.backendMu.Unlock()
 	}
@@ -333,7 +339,7 @@ func (b *Broker) clearBackend() {
 	if b.backend != nil {
 		b.backendMu.Lock()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = b.backend.guard(ctx, map[string]any{"op": "clear"})
+		b.cleanupGuard(ctx, map[string]any{"op": "clear"})
 		cancel()
 		b.backendMu.Unlock()
 	}
@@ -376,10 +382,7 @@ func (b *Broker) disconnect(client string) {
 		b.backendMu.Lock()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		for _, token := range controlTokens {
-			if ctx.Err() != nil {
-				break
-			}
-			_ = b.backend.guard(ctx, map[string]any{"op": "revoke", "token": token})
+			b.cleanupGuard(ctx, map[string]any{"op": "revoke", "token": token})
 		}
 		cancel()
 		b.backendMu.Unlock()
@@ -387,7 +390,7 @@ func (b *Broker) disconnect(client string) {
 }
 func (b *Broker) state(err string) UIState {
 	b.mu.Lock()
-	s := UIState{TrayAnchor: b.trayAnchor, Mode: b.mode, Paused: b.paused, Connected: b.uiCount > 0, Open: b.open, Now: b.now(), Requests: []Request{}, Grants: []Grant{}, Audit: append([]Audit{}, b.audit...), Recordings: []RecordingInfo{}, Backend: "Compositor-scoped input · native toplevel capture", Error: err}
+	s := UIState{RevocationUnconfirmed: len(b.pendingRevocations) > 0, TrayAnchor: b.trayAnchor, Mode: b.mode, Paused: b.paused, Connected: b.uiCount > 0, Open: b.open, Now: b.now(), Requests: []Request{}, Grants: []Grant{}, Audit: append([]Audit{}, b.audit...), Recordings: []RecordingInfo{}, Backend: "Compositor-scoped input · native toplevel capture", Error: err}
 	s.Clients = []UIClient{}
 	for id, label := range b.clients {
 		s.Clients = append(s.Clients, UIClient{id, label})
@@ -493,6 +496,7 @@ func (b *Broker) maintenance(ctx context.Context) {
 				}
 			}
 			b.mu.Unlock()
+			b.retryRevocations()
 			if controlExpired {
 				// Local authority is already gone. A bounded clear also removes any
 				// compositor lease whose individual revoke reply was lost.
@@ -514,7 +518,7 @@ func (b *Broker) handleUI(conn net.Conn) {
 			b.paused = true
 			b.clearLocked()
 			clearBackend = true
-			b.noteLocked("supervisor_disconnected", "all activity stopped")
+			b.noteLocked("supervisor_disconnected", "broker authority removed; compositor cleanup requested")
 		}
 		b.mu.Unlock()
 		if clearBackend {
@@ -697,4 +701,53 @@ func cleanReason(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// cleanupGuard records uncertainty rather than claiming a failed plugin revoke
+// succeeded. Callers serialize ordinary cleanup with backendMu; retries use the
+// same lock. A successful clear confirms all outstanding revocations.
+func (b *Broker) cleanupGuard(ctx context.Context, q map[string]any) {
+	err := b.backend.guard(ctx, q)
+	key := fmt.Sprint(q["op"], ":", q["token"])
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err != nil {
+		if b.pendingRevocations == nil {
+			b.pendingRevocations = make(map[string]map[string]any)
+		}
+		if _, exists := b.pendingRevocations[key]; !exists {
+			b.noteLocked("revocation_unconfirmed", key+": "+err.Error()+"; retrying; compositor lease expiry is the backstop")
+		}
+		b.pendingRevocations[key] = q
+		b.nextRevocationRetry = b.now().Add(time.Second)
+	} else {
+		if q["op"] == "clear" {
+			if len(b.pendingRevocations) > 0 {
+				b.noteLocked("revocation_confirmed", "clear")
+			}
+			clear(b.pendingRevocations)
+		} else if _, exists := b.pendingRevocations[key]; exists {
+			delete(b.pendingRevocations, key)
+			b.noteLocked("revocation_confirmed", key)
+		}
+	}
+}
+func (b *Broker) retryRevocations() {
+	b.backendMu.Lock()
+	defer b.backendMu.Unlock()
+	b.mu.Lock()
+	if len(b.pendingRevocations) == 0 || b.now().Before(b.nextRevocationRetry) {
+		b.mu.Unlock()
+		return
+	}
+	pending := make([]map[string]any, 0, len(b.pendingRevocations))
+	for _, q := range b.pendingRevocations {
+		pending = append(pending, q)
+	}
+	b.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	for _, q := range pending {
+		b.cleanupGuard(ctx, q)
+	}
 }

@@ -4,23 +4,15 @@
 
 ## Install or update the executable
 
-Once a release is published, install without Go or a source checkout:
+Follow the [README quick start](../README.md#1-get-the-executable-and-dependencies)
+for the canonical installer commands and dependencies. Prefer
+`sh install.sh --require-signature`; this requires cosign and refuses unsigned
+provenance. Installer options and verification details live in
+[Releasing](RELEASING.md#installer-behavior).
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/samsaffron/hyprland-computer-use/main/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
-hyprland-computer-use version
-```
-
-To inspect the installer first, download it instead of piping it to `sh`. It needs `curl`, `tar`, and the usual Linux core utilities. It verifies the archive's SHA-256 against the release manifest, then atomically replaces only the executable. No desktop components or services are changed.
-
-Optional installer arguments (the version below is an example, not a published-release claim):
-
-```sh
-sh install.sh --version v0.1.0 --install-dir "$HOME/.local/bin"
-```
-
-`COMPUTER_USE_INSTALL_DIR` also overrides the default destination. Rerun the installer to update, then run `hyprland-computer-use setup` inside the desktop session. Setup remains explicit because it replaces the compositor plugin and restarts an existing broker. For a pinned version, use `--version` again.
+Rerun the installer to update, then run `hyprland-computer-use setup` inside the
+desktop session. Setup remains explicit because it can replace the plugin and
+restart a verified broker. For a pinned release, pass `--version` again.
 
 ## Quick start: one binary
 
@@ -37,7 +29,7 @@ sudo pacman -S --needed make gcc pkgconf hyprland nlohmann-json \
   wayland libxkbcommon libei quickshell grim ffmpeg
 ```
 
-The plugin needs headers matching the **exact running Hyprland build**. This project is tested against Hyprland **0.56.2**, not every release; see [TESTING.md](TESTING.md).
+The plugin needs headers matching the **exact running Hyprland build**. See [Compatibility](COMPATIBILITY.md) for validated targets and the rolling early-warning lane.
 
 ### 2. Build and load the bundled plugin
 
@@ -117,7 +109,7 @@ For remote access, see [HTTP / OAuth guide](AUTH.md).
 - `console` extracts embedded QML into a private temporary runtime directory and removes it on normal exit. Quickshell remains an external runtime dependency; `grim` and `ffmpeg` remain external capture/recording dependencies.
 - After a Hyprland upgrade, install matching development headers and rerun `setup`. Loading is session-local; repeat after a compositor restart. No autostart is installed.
 
-This is a **single distributable**, not a statically self-contained desktop stack. A local compiler is needed because the compositor plugin is coupled to the exact Hyprland build. Setup has been build-tested against the lab's 0.56.2 headers; other releases may require source changes.
+This is a **single distributable**, not a statically self-contained desktop stack. A local compiler is needed because the compositor plugin is coupled to the exact Hyprland build. Other releases may require source changes; see [Compatibility](COMPATIBILITY.md).
 
 ## Startup troubleshooting
 

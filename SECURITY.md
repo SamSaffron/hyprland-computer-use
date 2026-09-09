@@ -10,11 +10,17 @@ Reports should avoid real desktop contents, access tokens, private keys, and oth
 
 This document describes the trust boundary and known limitations. The intended untrusted party is a client that has only the exposed MCP tools. The desktop user, broker, Quickshell console, compositor, plugins, and other processes with equivalent local authority are trusted.
 
+> **Same-user self-approval:** an agent with a shell can approve its own requests. `ui.sock` has no Quickshell peer authentication; any same-UID process can send approve, pause or mode commands. Human-only approval is a convention for MCP-only clients, not an enforceable boundary against desktop-user software. Do not grant same-user shell access if you rely on this boundary.
+
 Window metadata (titles, IDs, app, workspace, geometry) is intentionally available without a desktop grant, including while paused. In OAuth mode this still requires a valid connection access token. This can reveal sensitive document names. Pixels, input, recording and application launch retain their permission gates.
 
 Local proactive sharing is exposed only through the UI socket/CLI, not MCP. A click binds a timed grant to one existing MCP connection and one snapshot-validated native window. Multiple clients require a recipient choice; no future-client or broadcast grants.
 
 `setup` and `stop` are explicit local administration commands, never MCP tools. Setup may gracefully stop a verified same-user broker, replace the guard, and restart it in approve mode with no inherited grants. Kernel socket credentials, executable/module/argument checks, session checks and pidfds prevent accidental process-name/PID-file targeting; they are not protection against hostile same-UID software. Setup uses a temporary version-matched, read-only inspector plugin to discover actual guard paths. Service-managed brokers and configuration-loaded guards are refused rather than silently overriding their manager. No host service or autostart configuration is installed.
+
+## Revocation uncertainty
+
+Broker authority is removed immediately. Failed compositor revoke/clear calls are audited and retried with bounded calls. `computer_status.revocation_unconfirmed` and the console badge remain set until confirmation; new grants and input are blocked while uncertain. Compositor lease expiry is the backstop (ordinary grants up to one hour, temporary YOLO leases up to five minutes). Expiry does not itself clear the warning: the broker requires a successful cleanup reply. Already admitted bounded callbacks cannot be recalled.
 
 ## Automatic scoped input
 

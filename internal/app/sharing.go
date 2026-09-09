@@ -47,7 +47,7 @@ func (b *Broker) beginShare(client, capability string, seconds int) error {
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].FocusHistory > candidates[j].FocusHistory })
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.paused || b.uiCount == 0 {
+	if b.paused || b.uiCount == 0 || len(b.pendingRevocations) > 0 {
 		return errors.New("resume the local console before sharing")
 	}
 	if len(b.clients) == 0 {
@@ -81,7 +81,7 @@ func (b *Broker) selectShare(pickerID, client, windowID string) error {
 		b.mu.Unlock()
 		return errors.New("window picker expired or cancelled")
 	}
-	if b.paused || b.uiCount == 0 {
+	if b.paused || b.uiCount == 0 || len(b.pendingRevocations) > 0 {
 		b.mu.Unlock()
 		return errors.New("sharing is paused")
 	}
@@ -136,7 +136,7 @@ func (b *Broker) selectShare(pickerID, client, windowID string) error {
 	}
 	b.mu.Lock()
 	_, clientConnected := b.clients[client]
-	stillCurrent := b.picker == p && b.authority == authority && !b.paused && b.uiCount > 0 && clientConnected && b.now().Before(expires)
+	stillCurrent := b.picker == p && b.authority == authority && !b.paused && len(b.pendingRevocations) == 0 && b.uiCount > 0 && clientConnected && b.now().Before(expires)
 	if stillCurrent {
 		b.grants[g.ID] = g
 		for _, request := range b.requests {
@@ -152,7 +152,7 @@ func (b *Broker) selectShare(pickerID, client, windowID string) error {
 	if !stillCurrent {
 		if authorized {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Second)
-			_ = b.backend.guard(cleanupCtx, map[string]any{"op": "revoke", "token": g.ID})
+			b.cleanupGuard(cleanupCtx, map[string]any{"op": "revoke", "token": g.ID})
 			cleanupCancel()
 		}
 		return errors.New("window picker changed while grant was being authorized")

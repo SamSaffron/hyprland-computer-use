@@ -1,0 +1,62 @@
+name: Native compatibility
+on:
+  workflow_call:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 5 * * 1'
+permissions:
+  contents: read
+jobs:
+
+  native:
+    name: Native (${{ matrix.snapshot }})
+    strategy:
+      fail-fast: false
+      matrix:
+        snapshot: [pinned, rolling]
+    # Rolling is early warning, never a support claim or a release gate.
+    continue-on-error: ${{ matrix.snapshot == 'rolling' }}
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel@sha256:61f7de2dd88cc4ba1fe36c24cfe1a503c3936984492d6405eeab013ce6ac68c5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install the pinned Arch build environment
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # Use one dated Arch Linux Archive snapshot so Hyprland and all of
+          # its private-API dependencies move together.
+          if [[ '${{ matrix.snapshot }}' == pinned ]]; then
+            printf 'Server = https://archive.archlinux.org/repos/2026/08/06/$repo/os/$arch\n' >/etc/pacman.d/mirrorlist
+          fi
+          pacman -Syyuu --noconfirm
+          pacman -S --needed --noconfirm go git hyprland libei wayland libxkbcommon nlohmann-json pkgconf quickshell qt6-declarative dbus python kitty mesa
+          pacman -Q hyprland aquamarine quickshell
+          [[ '${{ matrix.snapshot }}' != pinned ]] || test "$(pacman -Q hyprland)" = 'hyprland 0.56.2-1'
+          useradd --create-home ci
+          chown -R ci:ci "$GITHUB_WORKSPACE"
+      - name: Compile both guards, setup helpers, and native tests
+        shell: bash
+        run: |
+          set -euxo pipefail
+          runuser -u ci -- env HOME=/home/ci make native-build-check
+          [[ '${{ matrix.snapshot }}' != pinned ]] || test "$(./build/header-version)" = 'efb50993780079460b0cbed1363e2166a2de1d9f'
+      - name: Exercise the embedded compositor-free setup build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          runuser -u ci -- env HOME=/home/ci make build/hyprland-computer-use
+          runuser -u ci -- env \
+            HOME=/home/ci \
+            XDG_DATA_HOME=/home/ci/.local/share \
+            ./build/hyprland-computer-use setup --build-only --input-mode=auto
+      - name: Real offscreen QML, XKB and private DBus tests
+        run: |
+          runuser -u ci -- env HOME=/home/ci COMPUTER_USE_TEST_QML=1 COMPUTER_USE_TEST_XKB=1 COMPUTER_USE_TEST_DBUS=1 dbus-run-session -- go test -race ./internal/app
+      # Stock Aquamarine may not initialize a software-only headless backend.
+      # Keep visible as early warning; do not claim this as a release guarantee.
+      - name: Experimental headless compositor MCP smoke
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          runuser -u ci -- env HOME=/home/ci dbus-run-session -- python scripts/headless-smoke.py

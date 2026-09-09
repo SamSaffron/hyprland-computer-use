@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -310,7 +311,7 @@ func startHTTP(ctx context.Context, b *Broker, addr, public string, oauth bool, 
 			err = server.Serve(listener)
 		}
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			fmt.Printf("HTTP MCP stopped: %v\n", err)
+			fmt.Fprintf(os.Stderr, "HTTP MCP stopped: %v\n", err)
 		}
 	}()
 	return server, nil

@@ -26,6 +26,10 @@ The Quickshell outline is an **advisory reflection of broker state**, not the se
 
 The executable is **`hyprland-computer-use`**. Use **`computer-use`** as the MCP server name in your client configuration.
 
+`computer_status.revocation_unconfirmed` reports failed compositor cleanup. While
+set, the broker denies further permissioned activity and retries cleanup; see
+[Security](../SECURITY.md#revocation-uncertainty).
+
 ## MCP tools
 
 | Tool | Purpose |
@@ -116,7 +120,7 @@ Typing and mouse actions borrow the target's **protocol focus**, not desktop act
 - The broker's own virtual US keyboard is identified by its Wayland client process, not by the active physical keyboard. Changing physical layouts is not necessary. The native seat is identified by protocol name, not registry order. Full IME/toolkit compatibility remains unverified.
 - Focus borrowing is available in **guard protocols 2 and 3**. Run `hyprland-computer-use setup` to replace an old/faulted guard and restart an existing broker automatically. Grants are cleared. A loaded seat-owning guard requires a Hyprland restart before replacement; setup refuses hot unloading. An old guard is rejected explicitly; a restoration fault disables further input until setup repairs it.
 
-Native mock restoration tests and exact 0.56.2 header compilation are covered; real human/agent interleaving and application behavior still require the disposable-session checks in [TESTING.md](TESTING.md). Do not treat focus preservation as a new isolation or security guarantee.
+Native mock restoration tests and [pinned-target](COMPATIBILITY.md) header compilation are covered; real human/agent interleaving and application behavior still require the disposable-session checks in [TESTING.md](TESTING.md). Do not treat focus preservation as a new isolation or security guarantee.
 
 ## Current limitations
 

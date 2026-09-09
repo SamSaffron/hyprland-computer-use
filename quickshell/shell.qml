@@ -100,7 +100,7 @@ ShellRoot {
                 }
                 Text { text: "COMPUTER USE"; color:root.ink; font.pixelSize:13; font.bold:true; anchors.verticalCenter:parent.verticalCenter }
                 Rectangle { width:9;height:9;radius:5;color:control.connected?root.accent:"#a25959";anchors.verticalCenter:parent.verticalCenter }
-                Text { text: root.state.paused ? "PAUSED" : root.state.mode.toUpperCase();color:root.accent;font.pixelSize:11;anchors.verticalCenter:parent.verticalCenter }
+                Text { text: root.state.revocation_unconfirmed ? "REVOCATION UNCONFIRMED" : root.state.paused ? "PAUSED" : root.state.mode.toUpperCase();color:root.accent;font.pixelSize:11;anchors.verticalCenter:parent.verticalCenter }
             }
             MouseArea { anchors.fill:parent; onClicked:root.openPanel=!root.openPanel; z:-1 }
         }

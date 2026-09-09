@@ -1,12 +1,14 @@
 # Hyprland Computer Use
 
+**Status: experimental / alpha. Use disposable windows first.**
+
 Let an MCP agent view and control **windows you approve**, with a local Quickshell permission console and tray icon. Access starts denied; you choose the windows and duration, and can pause or revoke it.
 
 ![Permission console beside a window with its green control-grant outline](docs/console-preview.svg)
 
-> **Threat model:** MCP clients are untrusted, but the compositor plugin, broker, local permission UI, and other processes running as your desktop user are trusted. Sharing a terminal transitively grants shell authority. This is scoped computer-use plumbing, **not an OS sandbox**; read [SECURITY.md](SECURITY.md) before exposing it to an agent.
+> **Threat model:** MCP clients are untrusted, but the compositor plugin, broker, local permission UI, and other processes running as your desktop user are trusted. **An agent with a shell can approve its own requests.** `ui.sock` trusts same-UID callers and does not authenticate Quickshell: “only the local UI may grant” is a transport/API convention, not process isolation. Sharing a terminal transitively grants shell authority. Do not give an agent a same-user shell if you rely on human-only approval. This is scoped computer-use plumbing, **not an OS sandbox**; read [SECURITY.md](SECURITY.md) before exposing it to an agent.
 
-Tested against Hyprland **0.56.2** (commit `efb50993780079460b0cbed1363e2166a2de1d9f`); the plugin requires headers matching your exact running build. Input supports native Wayland windows, not XWayland, and prefers a separate input seat with guarded focus borrowing for clients such as Kitty. Application coverage is limited; use disposable windows first. Seat-owning plugin updates require a Hyprland restart.
+See the [compatibility table](docs/COMPATIBILITY.md) for the pinned Hyprland build, upcoming-version CI, application limits and restart requirements. Input requires the compositor plugin; there is no global injection fallback.
 
 ## Quick start
 
@@ -21,14 +23,14 @@ sudo pacman -S --needed curl make gcc pkgconf hyprland nlohmann-json \
 
 **Arch Linux is currently the only tested distribution.** Other distributions may work if they provide the equivalent development packages, but are not part of the support claim. Source builds require **Go 1.26.6 or newer**; release binaries do not require Go.
 
-Install a release binary—no Go compiler needed. Download and inspect the installer first. It verifies the release's keyless Sigstore signature when `cosign` is installed, warns before falling back to checksum-only verification, and always checks the selected archive's SHA-256 digest (see [Releasing](docs/RELEASING.md#installer-behavior)).
+Install a release binary—no Go compiler needed. Download and inspect the installer first. It verifies the release's keyless Sigstore signature when `cosign` is installed. The recommended `--require-signature` option refuses installation without cosign; without that option it warns before falling back to checksum-only verification, and always checks the selected archive's SHA-256 digest (see [Releasing](docs/RELEASING.md#installer-behavior)).
 
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/samsaffron/hyprland-computer-use/main/install.sh
 less install.sh
-sh install.sh
+sh install.sh --require-signature
 # Or choose an exact release:
-sh install.sh --version v0.1.0
+sh install.sh --require-signature --version v0.1.1
 export PATH="$HOME/.local/bin:$PATH"
 hyprland-computer-use version
 ```

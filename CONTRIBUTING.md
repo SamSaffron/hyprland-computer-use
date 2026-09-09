@@ -57,3 +57,22 @@ A pull request should:
 5. Avoid generated build output, captures, recordings, credentials, and lab evidence containing private data.
 
 Report suspected vulnerabilities privately using the instructions in [SECURITY.md](SECURITY.md), not through a public issue.
+
+## Adding a Hyprland version
+
+1. Check the rolling Arch CI logs for the full package set and first private-API failure.
+   Reproduce in a disposable container/session, never by weakening setup version checks.
+2. Update native API adapters and popup-hook validation for the exact new commit.
+   Build both variants and setup helpers; run native unit and Wayland wire tests.
+3. Run the embedded `setup --build-only` path, QML/XKB/private-DBus tests, then
+   request/approve/input/revoke smoke in a supported isolated compositor. Record
+   renderer and dependency patches honestly; a headless startup failure is not a pass.
+4. Validate both Seat and Fallback with real clients, stale/foreign window refusal,
+   popup serial refusal, disconnect/expiry and actual toplevel capture. Check safe
+   restart behavior; never hot-unload a seat-owning plugin with clients attached.
+5. Add the version to `docs/COMPATIBILITY.md` only with that evidence. Promote a
+   complete dated Arch snapshot in `.github/workflows/native.yml`, retaining older
+   supported lanes where practical. Never replace a hash merely to satisfy setup.
+
+The rolling lane is early warning, not automatic support. Release packaging must
+continue to require the pinned native compilation/integration lane.

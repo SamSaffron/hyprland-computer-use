@@ -82,7 +82,7 @@ hyprctl plugin unload "$PWD/build/guard.so"
 
 ## Tests and demo
 
-Go and native checks run automatically on pushes and pull requests through [GitHub Actions](../.github/workflows/go.yml). CI uses the Go version in `go.mod`, rejects unformatted code, runs vet, native transaction unit tests and Go race tests, and builds the static Go executable. A separate Arch job pins a complete package snapshot and compiles both guard variants, setup helpers, and native tests against Hyprland 0.56.2 headers; it also runs the real embedded `setup --build-only` path. Desktop-dependent behavior remains a separate disposable-lab check.
+Go and native checks run automatically on pushes and pull requests through [GitHub Actions](../.github/workflows/go.yml). CI uses the Go version in `go.mod`, rejects unformatted code, runs vet, native transaction unit tests and Go race tests, and builds the static Go executable. A separate Arch job pins a complete package snapshot and compiles both guard variants, setup helpers, and native tests against the [pinned native target](COMPATIBILITY.md); it also runs the real embedded `setup --build-only` path. Required offscreen QML/XKB/private-DBus checks run there too. The headless compositor smoke is currently non-blocking; see [Testing](TESTING.md).
 
 ```sh
 make fmt        # apply go fmt to project packages
@@ -99,4 +99,4 @@ make test       # formatting + vet + C++ transaction tests + Go race tests
 
 The demonstration uses the old global input harness **only to simulate the local human clicking approval controls**. Computer control is issued by the new MCP client. Test approvals are not represented as real user approvals on a live desktop.
 
-See [testing results](TESTING.md) for exact lab versions, optional checks, and unverified cases.
+See [Testing](TESTING.md) for required QML/XKB/DBus checks, the experimental headless smoke and unverified cases; exact targets live in [Compatibility](COMPATIBILITY.md).

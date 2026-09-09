@@ -428,7 +428,13 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (map[str
 		if e != nil {
 			return nil, e
 		}
-		defer b.backend.guard(context.Background(), map[string]any{"op": "revoke", "token": token})
+		defer func() {
+			b.backendMu.Lock()
+			defer b.backendMu.Unlock()
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			b.cleanupGuard(cleanupCtx, map[string]any{"op": "revoke", "token": token})
+		}()
 	}
 	check := func() error {
 		if e := ctx.Err(); e != nil {

@@ -19,8 +19,12 @@ func TestReleaseInstaller(t *testing.T) {
 	for _, tc := range []struct {
 		name, mode, arch, version string
 		fail                      bool
+		requireSignature          bool
 	}{
 		{name: "latest"},
+		{name: "required signature missing", mode: "no-cosign", requireSignature: true, fail: true},
+		{name: "required signature verified", mode: "cosign", requireSignature: true},
+		{name: "required signature invalid", mode: "bad-signature", requireSignature: true, fail: true},
 		{name: "explicit", version: "0.1.0"},
 		{name: "arm64", arch: "aarch64"},
 		{name: "checksum mismatch", mode: "bad-checksum", fail: true},
@@ -151,13 +155,29 @@ printf '%s\n' "$*" > "$FIXTURE/cosign-args"
 				t.Fatal(err)
 			}
 			args := []string{script, "--install-dir", installDir}
+			if tc.requireSignature {
+				args = append(args, "--require-signature")
+			}
 			if tc.version != "" {
 				args = append(args, "--version", tc.version)
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, "sh", args...)
-			cmd.Env = append(os.Environ(), "PATH="+tools+":"+os.Getenv("PATH"), "FIXTURE="+dir,
+			testPath := tools + ":" + os.Getenv("PATH")
+			if tc.mode == "no-cosign" {
+				testPath = tools
+				for _, name := range []string{"tar", "sha256sum", "awk", "grep", "mktemp", "rm"} {
+					path, err := exec.LookPath(name)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(path, filepath.Join(tools, name)); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			cmd.Env = append(os.Environ(), "PATH="+testPath, "FIXTURE="+dir,
 				"TEST_MODE="+tc.mode, "TEST_ARCH="+tc.arch, "TEST_ASSET="+asset)
 			output, err := cmd.CombinedOutput()
 			if (err != nil) != tc.fail {

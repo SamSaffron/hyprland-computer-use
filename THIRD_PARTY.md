@@ -17,7 +17,7 @@ The preferred `guard-seat.so` variant links libwayland-server and libxkbcommon, 
 
 ## Release tooling
 
-The release helper and its test (`scripts/release.sh`, `scripts/release_test.go`) are adapted from [term-llm](https://github.com/samsaffron/term-llm). The installer and GoReleaser workflow follow the same release pattern. The upstream MIT notice is retained below:
+The release helper and its test (`scripts/release.sh`, `scripts/release_test.go`) are adapted from [the upstream release helper](https://github.com/samsaffron/term-llm). The installer and GoReleaser workflow follow the same release pattern. The upstream MIT notice is retained below:
 
 ```text
 MIT License

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Release script for hyprland-computer-use (adapted from term-llm)
+# Release script for hyprland-computer-use (upstream attribution: THIRD_PARTY.md)
 # Usage:
 #   ./scripts/release.sh v1.0.0
 #   ./scripts/release.sh --auto

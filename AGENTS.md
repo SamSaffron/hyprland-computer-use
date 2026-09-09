@@ -1,10 +1,10 @@
 # Hyprland Computer Use
 
-Standalone Hyprland computer-use MCP server with a Quickshell permission console. Standalone project; no term-llm integration or live-desktop deployment is implied.
+Standalone Hyprland computer-use MCP server with a Quickshell permission console. No external project integration or live-desktop deployment is implied.
 
 ## Working rules
 - Work inline: no background agent jobs.
-- Default deny / approve mode. Only the local UI may grant, revoke, pause or select YOLO.
+- Default deny / approve mode. Only the local UI transport may grant, revoke, pause or select YOLO; same-UID shell callers can impersonate it (see SECURITY.md).
 - Keep MCP and local UI transports separate. No arbitrary shell, path, clipboard or policy-changing MCP tool.
 - Window IDs are instance-bound; no title/app-name based authority. Capture must use actual toplevel capture, never a desktop crop masquerading as window isolation.
 - Window-scoped input requires the companion compositor plugin. Never silently fall back to global injection.

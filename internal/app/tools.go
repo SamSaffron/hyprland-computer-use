@@ -63,7 +63,7 @@ func (b *Broker) newMCPServer(clientCtx context.Context, id string, opts *mcp.Se
 			inputMode = "automatic"
 			limitations[1] = "independent seat preferred; clients without both seat devices use guarded focus borrowing (temporary native focus transitions, idle input required)"
 		}
-		return map[string]any{"mode": b.mode, "input_mode": inputMode, "paused": b.paused, "supervisor_connected": b.uiCount > 0, "client_id": id, "grants": gs, "requests": rs, "limitations": limitations}, nil
+		return map[string]any{"mode": b.mode, "input_mode": inputMode, "paused": b.paused, "revocation_unconfirmed": len(b.pendingRevocations) > 0, "supervisor_connected": b.uiCount > 0, "client_id": id, "grants": gs, "requests": rs, "limitations": limitations}, nil
 	})
 	type PermissionArgs struct {
 		Capability string `json:"capability" jsonschema:"observe, control, record, or launch"`

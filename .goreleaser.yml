@@ -37,6 +37,9 @@ archives:
       - docs/*.svg
       - native/*.xml
 
+sboms:
+  - artifacts: archive
+
 checksum:
   name_template: checksums.txt
 

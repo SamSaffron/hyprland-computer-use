@@ -13,11 +13,11 @@ This uses a **GoReleaser + tagged GitHub Actions release + per-user installer** 
 
 The executable embeds native source and Quickshell QML. **Do not ship a precompiled guard:** the target's `setup` compiles it against that desktop's exact Hyprland headers. Go is not required on the target, but the system compiler and runtime dependencies still are.
 
-These are Linux builds, not a claim of broad compositor compatibility. The lab version is Hyprland 0.56.2; ARM64 is cross-compiled, not desktop-tested. See [testing status](TESTING.md).
+These are Linux builds, not a claim of broad compositor compatibility. See [compatibility](COMPATIBILITY.md) for native targets; ARM64 is cross-compiled, not desktop-tested. See [testing status](TESTING.md).
 
 ## Check a release locally
 
-With GoReleaser v2 installed:
+With GoReleaser v2 and Syft installed:
 
 ```sh
 make test
@@ -55,7 +55,7 @@ Check the installed version, run `setup`, and start `serve` inside a disposable 
 1. Rejects non-Linux and unsupported architectures.
 2. Downloads the matching archive and checksum manifest over HTTPS.
 3. If `cosign` is available, downloads the detached signature/certificate and verifies the manifest against the GitHub Actions OIDC issuer and this repository's tagged `release.yml` workflow identity. A failed signature is fatal.
-4. If `cosign` is unavailable, prints a visible provenance warning and continues with checksum-only verification.
+4. With `--require-signature`, refuses to proceed if `cosign` is unavailable. Without it, prints a visible provenance warning and continues with checksum-only verification. The option is recommended but not yet default to preserve existing installer automation.
 5. Requires exactly one matching checksum and verifies SHA-256 before extraction.
 6. Extracts only the executable, then atomically replaces it in `~/.local/bin` (or the selected install directory), including when the old binary is running.
 7. Prints the next `setup` command; it does **not** run it.
@@ -76,3 +76,5 @@ sha256sum --check checksums.txt
 ```
 
 Installer and release-script tests use local fixture archives and mocked curl/git/gh commands. They do not access the network, create real tags, or publish releases.
+
+Release CI requires the pinned native lane, generates archive SBOMs using Syft, and creates GitHub artifact attestations for archives and SBOMs. Verify provenance with `gh attestation verify <archive-or-sbom> --repo samsaffron/hyprland-computer-use`. Checksums remain cosign-signed; attestations do not replace checksum verification.

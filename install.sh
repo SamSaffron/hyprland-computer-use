@@ -1,5 +1,5 @@
 #!/bin/sh
-# Release installer following term-llm's per-user GitHub release workflow.
+# Per-user GitHub release installer.
 # Only installs the executable; setup and desktop/process changes stay explicit.
 set -eu
 
@@ -9,6 +9,7 @@ INSTALL_DIR=${COMPUTER_USE_INSTALL_DIR:-$HOME/.local/bin}
 VERSION=""
 TMP=""
 STAGED=""
+REQUIRE_SIGNATURE=0
 
 fail() { printf 'Error: %s\n' "$1" >&2; exit 1; }
 cleanup() {
@@ -21,10 +22,11 @@ trap 'exit 1' HUP INT TERM
 
 usage() {
     cat <<'USAGE'
-Usage: install.sh [--version <tag>] [--install-dir <path>]
+Usage: install.sh [--version <tag>] [--install-dir <path>] [--require-signature]
 
 Install the latest Linux release, or select a tag such as v0.1.0.
 Default destination: ~/.local/bin (override with COMPUTER_USE_INSTALL_DIR).
+Use --require-signature to refuse installation unless cosign verifies provenance.
 No sudo, packages, compositor changes, or services are invoked.
 USAGE
 }
@@ -37,6 +39,7 @@ while [ "$#" -gt 0 ]; do
         --install-dir)
             [ "$#" -ge 2 ] && [ -n "$2" ] || fail "--install-dir requires a path"
             INSTALL_DIR=$2; shift 2 ;;
+        --require-signature) REQUIRE_SIGNATURE=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) fail "Unknown option: $1" ;;
     esac
@@ -58,6 +61,10 @@ esac
 for tool in curl tar sha256sum awk grep mktemp; do
     command -v "$tool" >/dev/null 2>&1 || fail "Required command not found: $tool"
 done
+
+if [ "$REQUIRE_SIGNATURE" = 1 ]; then
+    command -v cosign >/dev/null 2>&1 || fail "--require-signature requires cosign; nothing installed"
+fi
 
 if [ -z "$VERSION" ]; then
     # Follow GitHub's release redirect without consuming API rate limits.

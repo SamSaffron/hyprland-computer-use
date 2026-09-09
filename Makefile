@@ -4,6 +4,8 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 APP_PACKAGE := github.com/samsaffron/hyprland-computer-use/internal/app
 LDFLAGS = -s -w -X $(APP_PACKAGE).Version=$(VERSION) -X $(APP_PACKAGE).Commit=$(COMMIT) -X $(APP_PACKAGE).Date=$(BUILD_DATE)
+NATIVE_CXXFLAGS := -std=c++23 -O2 -Wall -Wextra -fstack-protector-strong -D_FORTIFY_SOURCE=2
+NATIVE_LDFLAGS := -Wl,-z,relro,-z,now
 GO_SOURCES := $(shell find . -type d \( -name .git -o -name build -o -name dist \) -prune -o -type f -name '*.go' -print)
 .PHONY: all native setup-native native-build-check fmt fmt-check vet native-test test clean
 all: $(BIN)/hyprland-computer-use native
@@ -14,14 +16,14 @@ $(BIN)/hyprland-computer-use: $(GO_SOURCES) $(wildcard native/*) $(wildcard quic
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $@ ./cmd/hyprland-computer-use
 native: $(BIN)/guard.so
 $(BIN)/guard.so: native/guard.cpp native/surface_tree.hpp native/surface_routing.hpp native/input_transaction.hpp native/text_transaction.hpp native/text_keymap.hpp native/text_keyboard.hpp | $(BIN)
-	$(CXX) -std=c++23 -shared -fPIC -fno-gnu-unique $$(pkg-config --cflags hyprland libeis-1.0) $< -o $@
+	$(CXX) $(NATIVE_CXXFLAGS) $(CXXFLAGS) -shared -fPIC -fno-gnu-unique $(NATIVE_LDFLAGS) $(LDFLAGS_NATIVE) $$(pkg-config --cflags hyprland libeis-1.0) $< -o $@
 .PHONY: independent-seat
 independent-seat: $(BIN)/guard-seat.so
 $(BIN)/guard-seat.so: native/guard.cpp $(wildcard native/*.hpp) | $(BIN)
-	$(CXX) -std=c++23 -shared -fPIC -fno-gnu-unique -DCOMPUTER_USE_INDEPENDENT_SEAT $$(pkg-config --cflags hyprland libeis-1.0) $< -o $@ $$(pkg-config --libs wayland-server xkbcommon)
+	$(CXX) $(NATIVE_CXXFLAGS) $(CXXFLAGS) -shared -fPIC -fno-gnu-unique $(NATIVE_LDFLAGS) $(LDFLAGS_NATIVE) -DCOMPUTER_USE_INDEPENDENT_SEAT $$(pkg-config --cflags hyprland libeis-1.0) $< -o $@ $$(pkg-config --libs wayland-server xkbcommon)
 setup-native: native $(BIN)/header-version $(BIN)/setup-inspector.so
 $(BIN)/setup-inspector.so: native/setup_inspector.cpp native/popup_hook.hpp | $(BIN)
-	$(CXX) -std=c++23 -shared -fPIC -fno-gnu-unique $$(pkg-config --cflags hyprland) $< -o $@
+	$(CXX) $(NATIVE_CXXFLAGS) $(CXXFLAGS) -shared -fPIC -fno-gnu-unique $(NATIVE_LDFLAGS) $(LDFLAGS_NATIVE) $$(pkg-config --cflags hyprland) $< -o $@
 $(BIN)/header-version: native/version.cpp | $(BIN)
 	$(CXX) $$(pkg-config --cflags hyprland) $< -o $@
 

@@ -27,7 +27,7 @@ Open the permission console from the tray, or run `hyprland-computer-use console
   --tls-key /path/to/private-key.pem
 ```
 
-Use a certificate trusted by the MCP client/browser. The disposable-lab test used its own explicitly trusted test CA; it did not disable TLS verification.
+Use a certificate trusted by the MCP client/browser. For disposable tests, explicitly trust a test CA rather than disabling TLS verification.
 
 ### Behind an HTTPS reverse proxy
 

@@ -24,7 +24,7 @@ The Go Wayland client is unchanged and still sends no key events. No clipboard r
 
 Use a newly built executable and run its local `setup` command to rebuild/replace the guard and restart the broker. Reconnect the MCP client and approve fresh grants. A text-containing batch checks the guard's `unicode_text` feature and exact chunk limit before executing any actions. An old protocol-2 guard without this feature gives `unicode_text_guard_unavailable` with setup guidance; it does not silently revert to the old ASCII path.
 
-The native implementation compiles against **Hyprland 0.56.2** headers. Native mock tests exercise the actual transaction code; optional real-libxkbcommon tests compile the actual native generator and check Unicode keysyms/UTF-32. This is **not live app/toolkit evidence**. XWayland, popup/subsurface routing, universal IME compatibility and literal paste semantics remain unsupported. See [TESTING.md](TESTING.md).
+Native build targets are listed in [Compatibility](COMPATIBILITY.md). Native mock tests exercise the actual transaction code; CI real-libxkbcommon tests compile the actual native generator and check Unicode keysyms/UTF-32. This is **not live app/toolkit evidence**. XWayland, popup/subsurface routing, universal IME compatibility and literal paste semantics remain unsupported. See [TESTING.md](TESTING.md).
 
 ## Manual test: two disposable editor windows
 
