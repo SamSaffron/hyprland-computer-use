@@ -26,13 +26,6 @@ curl -fsSL https://raw.githubusercontent.com/samsaffron/hyprland-computer-use/ma
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-**Release publishing is newly configured, not yet verified.** Until a release is available, install Go and build from this checkout:
-
-```sh
-make build/hyprland-computer-use
-export PATH="$PWD/build:$PATH"
-```
-
 Only the **executable** needs to be copied to another desktop; native sources and the UI are bundled. The target still needs the system dependencies above.
 
 ### 2. Start it inside your Hyprland session
