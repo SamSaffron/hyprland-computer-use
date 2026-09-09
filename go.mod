@@ -5,7 +5,7 @@ go 1.26.6
 require (
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/modelcontextprotocol/go-sdk v1.7.0
-	golang.org/x/sys v0.41.0
+	golang.org/x/sys v0.48.0
 )
 
 require (
