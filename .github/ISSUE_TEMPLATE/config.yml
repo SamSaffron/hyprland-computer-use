@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a vulnerability privately
+    url: https://github.com/samsaffron/hyprland-computer-use/security/advisories/new
+    about: Do not disclose suspected vulnerabilities in a public issue.

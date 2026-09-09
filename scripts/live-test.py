@@ -6,6 +6,8 @@ Never run against a desktop containing personal work.
 import base64,json,os,socket,struct,time,subprocess
 from pathlib import Path
 if os.environ.get('COMPUTER_USE_DISPOSABLE')!='1':raise SystemExit('Set COMPUTER_USE_DISPOSABLE=1 only inside an isolated test compositor.')
+artifacts=Path(os.environ.get('COMPUTER_USE_ARTIFACT_DIR',Path(__file__).resolve().parent.parent/'evidence'))
+artifacts.mkdir(parents=True,exist_ok=True)
 root=Path(os.environ['XDG_RUNTIME_DIR'])/'computer-use'
 def local(q):
  s=socket.socket(socket.AF_UNIX);s.connect(str(root/'ui.sock'));s.sendall(json.dumps(q).encode()+b'\n')
@@ -45,7 +47,7 @@ try:
  windows=result(c.call('list_windows',{'workspace':1}))['windows'];target=next(w for w in windows if w['class']=='kitty');other=next(w for w in windows if 'Pinta' in w['class']);wid=target['id'];rev=target['revision']
  tools=c.rpc('tools/list',{})['result']['tools'];names={t['name'] for t in tools};assert not {'approve','set_mode','shell','ui'}&names;assert denied(c.call('set_mode',{'mode':'yolo'}));assert result(c.call('computer_status'))['mode']=='approve';ok('MCP cannot approve or switch modes')
  r=c.call('view_window',{'window_id':other['id']});result(r);im=next(x for x in r['result']['content'] if x['type']=='image');data=base64.b64decode(im['data']);dims=struct.unpack('>II',data[16:24]);assert dims==tuple(other['size']),(dims,other['size']);ok('native toplevel screenshot dimensions, not desktop crop')
- Path('/home/demo/lab/live-window-capture.png').write_bytes(data)
+ (artifacts/'live-window-capture.png').write_bytes(data)
  actions={'window_id':wid,'revision':rev,'actions':[{'type':'text','text':'echo LIVE_MCP_OK'},{'type':'key','key':'ENTER'}]}
  grant(c.call('input_window',actions),3);assert result(c.call('input_window',actions))['status']=='completed';ok('approved scoped keyboard input delivered')
  cross={'window_id':other['id'],'revision':other['revision'],'actions':[{'type':'click','x':10,'y':10}]};r=c.call('input_window',cross);assert result(r)['status']=='approval_required';local({'op':'deny','id':result(r)['request_id']});ok('window grant does not permit another window')
@@ -60,7 +62,7 @@ try:
  a={'window_id':other['id'],'revision':other['revision'],'actions':[{'type':'click','x':28,'y':485},{'type':'drag','x':100,'y':350,'to_x':200,'to_y':390},{'type':'scroll','x':180,'y':400,'delta':10}]}
  assert result(c.call('input_window',a))['status']=='completed';time.sleep(.3)
  after=c.call('view_window',{'window_id':other['id']});after=base64.b64decode(next(x for x in after['result']['content'] if x['type']=='image')['data']);assert before!=after,'pointer actions did not change Pinta pixels'
- Path('/home/demo/lab/pointer-before.png').write_bytes(before);Path('/home/demo/lab/pointer-after.png').write_bytes(after);ok('scoped pointer click, drag, scroll execute and change Pinta pixels')
+ (artifacts/'pointer-before.png').write_bytes(before);(artifacts/'pointer-after.png').write_bytes(after);ok('scoped pointer click, drag, scroll execute and change Pinta pixels')
  rec=result(c.call('record_window',{'window_id':wid}));assert rec['status']=='recording';time.sleep(.7);result(c.call('input_window',dict(actions,actions=[{'type':'text','text':'echo RECORDING_TEST'},{'type':'key','key':'ENTER'}])));time.sleep(.7)
  local({'op':'mode','mode':'approve'});time.sleep(1.5);rs=result(c.call('list_recordings'));record=next(r for r in rs if r['id']==rec['recording_id']);assert record['status']=='stopped' and record['frames']>=2 and record.get('path') and not record.get('error'),record
  subprocess.run(['ffprobe','-v','error',record['path']],check=True);ok('window recording finalizes on mode revocation')

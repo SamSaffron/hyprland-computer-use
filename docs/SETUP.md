@@ -26,7 +26,7 @@ sh install.sh --version v0.1.0 --install-dir "$HOME/.local/bin"
 
 **You only need to copy `hyprland-computer-use` to the target desktop.** It bundles the native compositor-plugin source, build recipes, Wayland protocol XML and Quickshell UI. You do not need the source checkout or separate QML files there. System dependencies are still required.
 
-If you are building the executable yourself, install Go and make, then run `make build/hyprland-computer-use` in this checkout. The distributable is `build/hyprland-computer-use`.
+If you are building the executable yourself, install **Go 1.25 or newer** and make, then run `make build/hyprland-computer-use` in this checkout. The distributable is `build/hyprland-computer-use`.
 
 ### 1. Install system dependencies
 
@@ -47,7 +47,7 @@ Open a terminal **inside your Hyprland desktop session**, as your normal desktop
 hyprland-computer-use setup
 ```
 
-This builds, checks, and when necessary loads or updates the bundled plugin. **Setup is idempotent:** if the loaded guard and running broker already match the requested build, it leaves both running, preserves permissions, and reports `RESULT: EVERYTHING IS ALREADY OK`. If only the broker executable changed, setup restarts only the broker. If the active independent-seat guard differs, setup reports that a full Hyprland session restart is required before rerunning setup; a config reload is not enough. No package installation, autostart service, or compositor-config edit is performed. Use `setup --build-only` for an offline build.
+This builds, checks, and when necessary loads or updates the bundled plugin. **Setup is idempotent:** if the loaded guard and running broker already match the requested build, it leaves both running, preserves permissions, and reports `RESULT: EVERYTHING IS ALREADY OK`. If only the broker executable changed, setup restarts only the broker. If the active independent-seat guard differs, setup reports that a full Hyprland session restart is required before rerunning setup; a config reload is not enough. No package installation, autostart service, or compositor-config edit is performed. Use `setup --build-only` for a compositor-free native build; matching development packages are still required.
 
 ### 3. Start the broker and permission console
 

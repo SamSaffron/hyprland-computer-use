@@ -82,7 +82,7 @@ hyprctl plugin unload "$PWD/build/guard.so"
 
 ## Tests and demo
 
-Go checks run automatically on pushes and pull requests through [GitHub Actions](../.github/workflows/go.yml). CI uses the Go version in `go.mod`, rejects unformatted code, runs vet, native transaction unit tests and Go race tests, and builds the static Go executable. Native plugin compilation and desktop-dependent checks are separate lab checks.
+Go and native checks run automatically on pushes and pull requests through [GitHub Actions](../.github/workflows/go.yml). CI uses the Go version in `go.mod`, rejects unformatted code, runs vet, native transaction unit tests and Go race tests, and builds the static Go executable. A separate Arch job pins a complete package snapshot and compiles both guard variants, setup helpers, and native tests against Hyprland 0.56.2 headers; it also runs the real embedded `setup --build-only` path. Desktop-dependent behavior remains a separate disposable-lab check.
 
 ```sh
 make fmt        # apply go fmt to project packages
@@ -93,8 +93,9 @@ make test       # formatting + vet + C++ transaction tests + Go race tests
 
 - `make native-test`: standalone C++ tests of transaction cleanup/restoration using a fake compositor API; no Hyprland headers or desktop required.
 - `make test`: formatting, vet, native transaction tests, and Go unit/race tests covering permission separation, scope, duration, revocation, UI loss, YOLO pause semantics, pointer bounds, keys, socket safety, and the built-in Wayland device lifecycle.
-- `scripts/live-test.py`: **destructive, opt-in disposable-session tests**, exercising the actual MCP protocol, compositor guard, toplevel capture, pointer/key input, recording finalization, expiry and disconnect. Requires the broker, Quickshell, a Kitty window and a Pinta window. It uses a separate local UI connection to simulate the human. Set `COMPUTER_USE_DISPOSABLE=1` only in a disposable compositor.
-- `scripts/mcp-probe.py`: a persistent real stdio MCP client used to make the demo. Its test-only command socket cannot grant approvals. `scripts/probe-call.py` sends it a tool call.
+- `scripts/live-test.py`: **destructive, opt-in disposable-session tests**, exercising the actual MCP protocol, compositor guard, toplevel capture, pointer/key input, recording finalization, expiry and disconnect. Requires the broker, Quickshell, a Kitty window and a Pinta window. It uses a separate local UI connection to simulate the human. Set `COMPUTER_USE_DISPOSABLE=1` only in a disposable compositor. Artifacts default to ignored `evidence/`; set `COMPUTER_USE_ARTIFACT_DIR` to use another directory.
+- `scripts/live-sharing-test.py`: a fixed-layout disposable-lab harness for proactive sharing, recipient selection, the picker, shortcut, Waybar button, and tray. Its coordinates assume the documented 1400 × 1200 lab layout and must be reviewed before each run. It uses the same artifact-directory setting as `live-test.py`.
+- `scripts/mcp-probe.py`: a persistent real stdio MCP client used to make the demo. Its test-only same-user command socket cannot grant approvals, but still exposes MCP calls to any process that can reach it; never run it on a shared or untrusted desktop. `scripts/probe-call.py` sends it a tool call.
 
 The demonstration uses the old global input harness **only to simulate the local human clicking approval controls**. Computer control is issued by the new MCP client. Test approvals are not represented as real user approvals on a live desktop.
 

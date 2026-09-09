@@ -2,11 +2,12 @@ BIN := build
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
-APP_PACKAGE := github.com/sam-saffron-jarvis/hyprland-computer-use/internal/app
+APP_PACKAGE := github.com/samsaffron/hyprland-computer-use/internal/app
 LDFLAGS = -s -w -X $(APP_PACKAGE).Version=$(VERSION) -X $(APP_PACKAGE).Commit=$(COMMIT) -X $(APP_PACKAGE).Date=$(BUILD_DATE)
 GO_SOURCES := $(shell find . -type d \( -name .git -o -name build -o -name dist \) -prune -o -type f -name '*.go' -print)
-.PHONY: all native setup-native fmt fmt-check vet native-test test clean
+.PHONY: all native setup-native native-build-check fmt fmt-check vet native-test test clean
 all: $(BIN)/hyprland-computer-use native
+native-build-check: setup-native independent-seat native-test native-text-wire-test
 $(BIN):
 	mkdir -p $(BIN)
 $(BIN)/hyprland-computer-use: $(GO_SOURCES) $(wildcard native/*) $(wildcard quickshell/*.qml) Makefile LICENSE THIRD_PARTY.md go.mod go.sum | $(BIN)

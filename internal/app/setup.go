@@ -15,7 +15,7 @@ import (
 	"strings"
 	"syscall"
 
-	assets "github.com/sam-saffron-jarvis/hyprland-computer-use"
+	assets "github.com/samsaffron/hyprland-computer-use"
 )
 
 var nativeBundle = assets.Native
@@ -80,7 +80,7 @@ func runSetup(args []string) error {
 	var dir string
 	if !*buildOnly && *load {
 		if os.Getenv("HYPRLAND_INSTANCE_SIGNATURE") == "" || os.Getenv("WAYLAND_DISPLAY") == "" {
-			return errors.New("setup must run inside your Hyprland desktop session; use --build-only for an offline build")
+			return errors.New("setup must run inside your Hyprland desktop session; use --build-only for a compositor-free native build")
 		}
 		var err error
 		dir, err = runtimeDir()
@@ -203,7 +203,7 @@ func checkHyprlandVersion(header, version []byte) error {
 	}
 	hash := strings.TrimSpace(string(header))
 	if hash == "" || running.Commit == "" || hash != running.Commit {
-		return fmt.Errorf("refusing to load plugin: header build %q does not match running Hyprland %q; install matching headers or restart into the matching compositor, then rerun setup", hash, running.Commit)
+		return fmt.Errorf("refusing to load plugin: Hyprland commit mismatch (plugin headers: %q; running compositor: %q); the plugin must be built against the exact running Hyprland commit—install matching headers or restart into the matching compositor, then rerun setup", hash, running.Commit)
 	}
 	return nil
 }

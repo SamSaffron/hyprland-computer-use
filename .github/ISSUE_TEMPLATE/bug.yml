@@ -1,0 +1,57 @@
+name: Bug report
+description: Report reproducible incorrect behavior
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include sensitive desktop captures, tokens, keys, or vulnerability details. Report security issues privately through SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Computer Use version
+      description: Output of `hyprland-computer-use version`.
+    validations:
+      required: true
+  - type: input
+    id: hyprland
+    attributes:
+      label: Hyprland version and commit
+      description: Relevant fields from `hyprctl -j version` and the installed header/package version.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Distribution, architecture, input backend, target application/toolkit, and output layout.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Use disposable windows and include the smallest reproducible sequence.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized diagnostics
+      description: Include relevant stderr/log excerpts after removing titles, paths, tokens, and desktop contents.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checks
+      options:
+        - label: I reproduced this in a disposable environment or understand the risk of testing on my desktop.
+          required: true
+        - label: This report does not disclose a security vulnerability publicly.
+          required: true

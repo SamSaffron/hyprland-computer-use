@@ -1,6 +1,6 @@
 package main
 
-import "github.com/sam-saffron-jarvis/hyprland-computer-use/internal/app"
+import "github.com/samsaffron/hyprland-computer-use/internal/app"
 
 func main() {
 	app.Main()

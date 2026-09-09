@@ -4,6 +4,8 @@
 
 OAuth is a **mode you opt into**, not a prerequisite for local use. No external identity provider or API-key provisioning is needed in built-in-provider mode. The desktop owner authorizes connections in the local Quickshell console.
 
+> **Experimental network surface:** Private Unix sockets are the supported default. Non-loopback HTTP/OAuth has automated protocol coverage but has not received an independent adversarial review and is not claimed hardened for hostile or public-internet deployment. Use it only on a controlled network behind firewalling and deployment-level rate limits, protect TLS keys, and prefer a dedicated reverse proxy. Do not expose a personal desktop directly to the internet.
+
 ## Modes
 
 | Mode | Start | Network/auth behavior |

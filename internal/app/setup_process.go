@@ -20,7 +20,7 @@ import (
 )
 
 const brokerReadyEnv = "COMPUTER_USE_INTERNAL_READY_FD"
-const projectModule = "github.com/sam-saffron-jarvis/hyprland-computer-use"
+const projectModule = "github.com/samsaffron/hyprland-computer-use"
 
 func lifecycleLock(path string) (*os.File, error) {
 	fd, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0600)

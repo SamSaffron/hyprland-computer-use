@@ -17,9 +17,9 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X github.com/sam-saffron-jarvis/hyprland-computer-use/internal/app.Version={{.Version}}
-      - -X github.com/sam-saffron-jarvis/hyprland-computer-use/internal/app.Commit={{.Commit}}
-      - -X github.com/sam-saffron-jarvis/hyprland-computer-use/internal/app.Date={{.Date}}
+      - -X github.com/samsaffron/hyprland-computer-use/internal/app.Version={{.Version}}
+      - -X github.com/samsaffron/hyprland-computer-use/internal/app.Commit={{.Commit}}
+      - -X github.com/samsaffron/hyprland-computer-use/internal/app.Date={{.Date}}
 
 archives:
   - id: default
@@ -30,6 +30,7 @@ archives:
       - LICENSE
       - THIRD_PARTY.md
       - SECURITY.md
+      - CONTRIBUTING.md
       - docs/*.md
       - native/*.xml
 

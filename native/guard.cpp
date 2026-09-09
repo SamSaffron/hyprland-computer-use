@@ -410,7 +410,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE h) {
   handle = h;
   if (HyprlandAPI::getHyprlandVersion(h).hash != GIT_COMMIT_HASH)
     throw std::runtime_error(
-        "Rebuild computer-use-guard against this exact Hyprland version");
+        "computer-use-guard was built for a different Hyprland commit; rebuild "
+        "it against the exact running Hyprland version");
   try {
     std::string dir = std::string(getenv("XDG_RUNTIME_DIR")) + "/computer-use";
     std::filesystem::create_directories(dir);

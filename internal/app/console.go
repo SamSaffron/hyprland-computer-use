@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"syscall"
 
-	assets "github.com/sam-saffron-jarvis/hyprland-computer-use"
+	assets "github.com/samsaffron/hyprland-computer-use"
 )
 
 var consoleBundle = assets.Console

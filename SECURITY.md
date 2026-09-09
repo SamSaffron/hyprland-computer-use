@@ -1,4 +1,12 @@
-# Permission contract and security status
+# Security policy
+
+## Reporting a vulnerability
+
+Please do **not** open a public issue for a suspected vulnerability. Use [GitHub private vulnerability reporting](https://github.com/samsaffron/hyprland-computer-use/security/advisories/new) to send the affected version, impact, reproduction steps, and any suggested mitigation to the maintainers. If private reporting is unavailable, contact the repository owner privately through the contact method on the [maintainer's GitHub profile](https://github.com/samsaffron) before disclosing details publicly.
+
+Reports should avoid real desktop contents, access tokens, private keys, and other sensitive artifacts. No bounty or fixed acknowledgement/remediation timeline is currently promised.
+
+## Permission contract and security status
 
 This document describes the trust boundary and known limitations. The intended untrusted party is a client that has only the exposed MCP tools. The desktop user, broker, Quickshell console, compositor, plugins, and other processes with equivalent local authority are trusted.
 

@@ -5,6 +5,8 @@ Requires COMPUTER_USE_DISPOSABLE=1, COMPUTER_USE_HUMAN_POINTER, and the lab shor
 import base64,json,os,socket,subprocess,time
 from pathlib import Path
 if os.environ.get('COMPUTER_USE_DISPOSABLE')!='1':raise SystemExit('Disposable compositor only')
+artifacts=Path(os.environ.get('COMPUTER_USE_ARTIFACT_DIR',Path(__file__).resolve().parent.parent/'evidence'))
+artifacts.mkdir(parents=True,exist_ok=True)
 root=Path(os.environ['XDG_RUNTIME_DIR'])/'computer-use'
 binary=os.environ.get('COMPUTER_USE_BINARY',str(Path(__file__).resolve().parent.parent/'build/hyprland-computer-use'))
 pointer=os.environ['COMPUTER_USE_HUMAN_POINTER']
@@ -35,13 +37,13 @@ try:
  ws=result(a.call('list_windows'))['windows'];w=next(w for w in ws if w['class']=='kitty');other=next(w for w in ws if 'Pinta' in w['class']);aid=result(a.call('computer_status'))['client_id']
  assert not result(a.call('computer_status'))['grants'];ok('metadata discovery without asking or granting')
  share();assert local({'op':'state'})['picker']['client']==aid
- subprocess.run(['grim','/home/demo/lab/sharing-picker.png'],check=True)
+ subprocess.run(['grim',str(artifacts/'sharing-picker.png')],check=True)
  click(w['at'][0]+w['size'][0]//2,w['at'][1]+300)
  st=result(a.call('computer_status'));assert len(st['grants'])==1 and st['grants'][0]['capability']=='control' and st['grants'][0]['remaining_seconds']>290
  assert st['requests']==[];ok('CLI + actual window click creates five-minute control grant, without agent request')
  args={'window_id':w['id'],'revision':w['revision'],'actions':[{'type':'text','text':'echo PROACTIVE_SHARE_WORKS'},{'type':'key','key':'ENTER'}]}
  assert result(a.call('input_window',args))['status']=='completed';r=a.call('view_window',{'window_id':w['id']});result(r)
- Path('/home/demo/lab/sharing-terminal.png').write_bytes(base64.b64decode(next(c['data'] for c in r['result']['content'] if c['type']=='image')))
+ (artifacts/'sharing-terminal.png').write_bytes(base64.b64decode(next(c['data'] for c in r['result']['content'] if c['type']=='image')))
  assert result(a.call('record_window',{'window_id':w['id']}))['status']=='approval_required';ok('shared window accepts real input/pixels, but recording still asks')
  assert result(a.call('input_window',dict(args,window_id=other['id'],revision=other['revision'])))['status']=='approval_required';ok('control does not leak to another window')
  local({'op':'revoke_all'});assert result(a.call('input_window',args))['status']=='approval_required';ok('revoking a proactive share blocks subsequent input')
@@ -65,9 +67,9 @@ try:
  local({'op':'pause','paused':True});assert result(a.call('list_windows'))['windows'];r=subprocess.run([binary,'share'],capture_output=True);assert r.returncode!=0;ok('paused discovery stays free, proactive grants remain blocked')
  local({'op':'pause','paused':False});share();click(w['at'][0]+300,w['at'][1]+300)
  assert result(a.call('input_window',dict(args,actions=[{'type':'text','text':'echo FIVE_MINUTE_USER_SHARE'},{'type':'key','key':'ENTER'}])))['status']=='completed'
- subprocess.run(['grim','/home/demo/lab/sharing-result.png'],check=True)
+ subprocess.run(['grim',str(artifacts/'sharing-result.png')],check=True)
  # Close permission panel, then activate the actual Waybar-hosted SNI icon.
- click(1348,86);click(1375,16);subprocess.run(['grim','/home/demo/lab/sharing-tray-open.png'],check=True);ok('Waybar tray activation exercised')
+ click(1348,86);click(1375,16);subprocess.run(['grim',str(artifacts/'sharing-tray-open.png')],check=True);ok('Waybar tray activation exercised')
 finally:
  if b:b.close()
  a.close();local({'op':'revoke_all'});local({'op':'pause','paused':True})

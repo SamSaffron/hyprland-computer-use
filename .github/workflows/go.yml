@@ -26,3 +26,37 @@ jobs:
           distribution: goreleaser
           version: '~> v2'
           args: release --snapshot --clean --skip=publish
+
+  native:
+    name: Native build (Hyprland 0.56.2)
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel@sha256:61f7de2dd88cc4ba1fe36c24cfe1a503c3936984492d6405eeab013ce6ac68c5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned Arch build environment
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # Use one dated Arch Linux Archive snapshot so Hyprland and all of
+          # its private-API dependencies move together.
+          printf 'Server = https://archive.archlinux.org/repos/2026/08/06/$repo/os/$arch\n' >/etc/pacman.d/mirrorlist
+          pacman -Syyuu --noconfirm
+          pacman -S --needed --noconfirm go git hyprland libei wayland libxkbcommon nlohmann-json pkgconf
+          test "$(pacman -Q hyprland)" = 'hyprland 0.56.2-1'
+          useradd --create-home ci
+          chown -R ci:ci "$GITHUB_WORKSPACE"
+      - name: Compile both guards, setup helpers, and native tests
+        shell: bash
+        run: |
+          set -euxo pipefail
+          runuser -u ci -- env HOME=/home/ci make native-build-check
+          test "$(./build/header-version)" = 'efb50993780079460b0cbed1363e2166a2de1d9f'
+      - name: Exercise the embedded compositor-free setup build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          runuser -u ci -- env HOME=/home/ci make build/hyprland-computer-use
+          runuser -u ci -- env \
+            HOME=/home/ci \
+            XDG_DATA_HOME=/home/ci/.local/share \
+            ./build/hyprland-computer-use setup --build-only --input-mode=auto

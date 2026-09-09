@@ -222,8 +222,14 @@ func TestSetupLoadRejectsMismatchedBuild(t *testing.T) {
 		}
 	}
 	t.Setenv("PATH", tools)
-	if err := runSetup([]string{"--load"}); err == nil || !strings.Contains(err.Error(), "refusing to load plugin") {
-		t.Fatalf("expected mismatch: %v", err)
+	if err := runSetup([]string{"--load"}); err == nil {
+		t.Fatal("expected mismatched Hyprland commits to be rejected")
+	} else {
+		for _, want := range []string{"refusing to load plugin", "Hyprland commit mismatch", "header-commit", "different-commit", "exact running Hyprland commit", "rerun setup"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("mismatch error %q does not contain %q", err, want)
+			}
+		}
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatal("attempted to load mismatched plugin")
