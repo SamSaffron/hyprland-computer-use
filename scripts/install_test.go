@@ -214,6 +214,9 @@ printf '%s\n' "$*" > "$FIXTURE/cosign-args"
 				if err != nil || !strings.Contains(string(args), "--certificate-identity https://github.com/samsaffron/hyprland-computer-use/.github/workflows/release.yml@refs/tags/v0.1.0") {
 					t.Fatalf("cosign identity not constrained: %q %v", args, err)
 				}
+				if !strings.Contains(string(args), "--new-bundle-format=false") {
+					t.Fatalf("cosign must verify the detached release format: %q", args)
+				}
 			}
 			entries, err := os.ReadDir(installDir)
 			if err != nil || len(entries) != 1 {

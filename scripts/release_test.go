@@ -84,6 +84,24 @@ source "$release_script" --auto --wait
 	}
 }
 
+func TestReleasePreservesDetachedCosignFormat(t *testing.T) {
+	config, err := os.ReadFile("../.goreleaser.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Cosign 3 defaults to bundles, but the installer consumes .sig/.pem.
+	for _, arg := range []string{
+		"--use-signing-config=false",
+		"--new-bundle-format=false",
+		"--output-signature=${signature}",
+		"--output-certificate=${certificate}",
+	} {
+		if !strings.Contains(string(config), arg) {
+			t.Errorf("release signing must retain %q for installer compatibility", arg)
+		}
+	}
+}
+
 func writeExecutable(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(contents), 0o755); err != nil {

@@ -51,6 +51,9 @@ signs:
     args:
       - sign-blob
       - --yes
+      # Preserve the detached signature/certificate consumed by install.sh.
+      - --use-signing-config=false
+      - --new-bundle-format=false
       - "--output-signature=${signature}"
       - "--output-certificate=${certificate}"
       - "${artifact}"

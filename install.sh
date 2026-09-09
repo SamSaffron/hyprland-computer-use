@@ -89,7 +89,9 @@ if command -v cosign >/dev/null 2>&1; then
     curl -fsSL -o "$TMP/checksums.txt.sig" "$BASE/checksums.txt.sig" || fail "Signature download failed"
     curl -fsSL -o "$TMP/checksums.txt.pem" "$BASE/checksums.txt.pem" || fail "Signing certificate download failed"
     IDENTITY="https://github.com/samsaffron/hyprland-computer-use/.github/workflows/release.yml@refs/tags/$VERSION"
+    # Releases use detached signatures, not cosign 3's default bundle format.
     cosign verify-blob \
+        --new-bundle-format=false \
         --certificate "$TMP/checksums.txt.pem" \
         --signature "$TMP/checksums.txt.sig" \
         --certificate-identity "$IDENTITY" \
