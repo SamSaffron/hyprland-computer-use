@@ -56,6 +56,51 @@ func TestCheckHyprlandVersion(t *testing.T) {
 	}
 }
 
+func TestSetupNextStepsReportReadiness(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		loaded bool
+		repair repairResult
+		want   string
+	}{
+		{
+			name: "offline build",
+			want: "Build complete.\nNext: run in Hyprland:\n  hyprland-computer-use setup\n",
+		},
+		{
+			name:   "first session setup",
+			loaded: true,
+			want:   "Setup complete.\nNext: start the broker:\n  hyprland-computer-use serve\nThen open permissions from its tray icon.\n",
+		},
+		{
+			name:   "broker restart",
+			loaded: true,
+			repair: repairResult{brokerRestarted: true, brokerRunning: true},
+			want:   "Setup complete. Broker restarted.\nNext: reconnect your MCP client and approve permissions again from the tray icon.\n",
+		},
+		{
+			name:   "already ready",
+			loaded: true,
+			repair: repairResult{guardUnchanged: true, brokerRunning: true},
+			want:   "Ready. Broker is running.\nOpen the tray icon to manage permissions.\n",
+		},
+		{
+			name:   "current guard without broker",
+			loaded: true,
+			repair: repairResult{guardUnchanged: true},
+			want:   "Setup complete.\nNext: start the broker:\n  hyprland-computer-use serve\nThen open permissions from its tray icon.\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var output bytes.Buffer
+			printSetupNextSteps(&output, tc.loaded, tc.repair)
+			if output.String() != tc.want {
+				t.Errorf("output:\n%q\nwant:\n%q", output.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestSetupBuildAndFailurePreservesCurrent(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("setup intentionally rejects root")

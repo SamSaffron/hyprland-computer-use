@@ -16,6 +16,7 @@ type fakeRepairBroker struct {
 	events              *[]string
 	stopErr, restartErr error
 	stopped             bool
+	outdated            bool
 }
 
 func (b *fakeRepairBroker) stop(context.Context) error {
@@ -29,7 +30,8 @@ func (b *fakeRepairBroker) restart(context.Context, string) error {
 	*b.events = append(*b.events, "restart")
 	return b.restartErr
 }
-func (b *fakeRepairBroker) close() {}
+func (b *fakeRepairBroker) currentExecutable() (bool, error) { return !b.outdated, nil }
+func (b *fakeRepairBroker) close()                           {}
 
 type fakeRepairLock struct {
 	events *[]string
@@ -53,6 +55,7 @@ type repairFixture struct {
 	configured, wrongPeer bool
 	restartRequired       bool
 	missingHook           bool
+	sameGuard             bool
 	fail, garbled         string
 }
 
@@ -157,14 +160,39 @@ func newRepairFixture(t *testing.T, activeBroker bool) *repairFixture {
 			}
 			return nil
 		},
+		equivalent: func(_, _ string) (bool, error) { return f.sameGuard, nil },
 	}
 	return f
 }
+func TestSameFileContents(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first")
+	second := filepath.Join(dir, "second")
+	if err := os.WriteFile(first, []byte("same bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte("same bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if same, err := sameFileContents(first, second); err != nil || !same {
+		t.Fatalf("equal files: %v %v", same, err)
+	}
+	if err := os.WriteFile(second, []byte("different!"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if same, err := sameFileContents(first, second); err != nil || same {
+		t.Fatalf("different files: %v %v", same, err)
+	}
+	if same, err := sameFileContents(first, filepath.Join(dir, "missing")); err != nil || same {
+		t.Fatalf("missing file: %v %v", same, err)
+	}
+}
+
 func TestSetupRepairsAndRestarts(t *testing.T) {
 	f := newRepairFixture(t, true)
-	restarted, err := repairNative(context.Background(), f.stage, f.root, f.ops)
-	if err != nil || !restarted {
-		t.Fatalf("repair: %v %v", restarted, err)
+	result, err := repairNative(context.Background(), f.stage, f.root, f.ops)
+	if err != nil || !result.brokerRestarted || !result.brokerRunning || result.guardUnchanged {
+		t.Fatalf("repair: %+v %v", result, err)
 	}
 	want := []string{"inspect-load", "inspect-unload", "stop", "lock", "unload-old", "load-new", "status", "publish", "unlock", "restart"}
 	if !reflect.DeepEqual(f.events, want) {
@@ -177,9 +205,9 @@ func TestSetupRepairsAndRestarts(t *testing.T) {
 func TestSetupFirstInstallDoesNotStartBroker(t *testing.T) {
 	f := newRepairFixture(t, false)
 	f.guard = false
-	restarted, err := repairNative(context.Background(), f.stage, f.root, f.ops)
-	if err != nil || restarted {
-		t.Fatalf("first setup: %v %v", restarted, err)
+	result, err := repairNative(context.Background(), f.stage, f.root, f.ops)
+	if err != nil || result.brokerRestarted || result.brokerRunning {
+		t.Fatalf("first setup: %+v %v", result, err)
 	}
 	for _, e := range f.events {
 		if e == "restart" || e == "stop" || e == "unload-old" {
@@ -187,6 +215,50 @@ func TestSetupFirstInstallDoesNotStartBroker(t *testing.T) {
 		}
 	}
 }
+func TestSetupAlreadyCurrentDoesNotDisruptRunningBroker(t *testing.T) {
+	f := newRepairFixture(t, true)
+	f.sameGuard = true
+	f.restartRequired = true
+	result, err := repairNative(context.Background(), f.stage, f.root, f.ops)
+	if err != nil || !result.guardUnchanged || !result.brokerRunning || result.brokerRestarted {
+		t.Fatalf("idempotent setup: %+v %v", result, err)
+	}
+	want := []string{"inspect-load", "inspect-unload", "status", "publish"}
+	if !reflect.DeepEqual(f.events, want) {
+		t.Fatalf("already-current setup was disruptive: %v", f.events)
+	}
+	if f.broker.stopped || !f.guard {
+		t.Fatal("already-current state changed")
+	}
+}
+
+func TestSetupAlreadyCurrentStillReportsMissingBroker(t *testing.T) {
+	f := newRepairFixture(t, false)
+	f.sameGuard = true
+	result, err := repairNative(context.Background(), f.stage, f.root, f.ops)
+	if err != nil || !result.guardUnchanged || result.brokerRunning || result.brokerRestarted {
+		t.Fatalf("current guard without broker: %+v %v", result, err)
+	}
+	want := []string{"inspect-load", "inspect-unload", "status", "publish"}
+	if !reflect.DeepEqual(f.events, want) {
+		t.Fatal(f.events)
+	}
+}
+
+func TestSetupRestartsOnlyOutdatedBrokerWhenGuardIsCurrent(t *testing.T) {
+	f := newRepairFixture(t, true)
+	f.sameGuard = true
+	f.broker.outdated = true
+	result, err := repairNative(context.Background(), f.stage, f.root, f.ops)
+	if err != nil || !result.guardUnchanged || !result.brokerRestarted || !result.brokerRunning {
+		t.Fatalf("broker-only update: %+v %v", result, err)
+	}
+	want := []string{"inspect-load", "inspect-unload", "status", "stop", "lock", "publish", "unlock", "restart"}
+	if !reflect.DeepEqual(f.events, want) {
+		t.Fatalf("guard was unnecessarily replaced: %v", f.events)
+	}
+}
+
 func TestSetupRepairFailsClosed(t *testing.T) {
 	for _, failure := range []string{"inspect-load", "inspect-unload", "lock", "unload-old", "load-new", "status", "publish"} {
 		t.Run(failure, func(t *testing.T) {
@@ -256,8 +328,20 @@ func TestSetupRefusesHotUnloadOfIndependentSeat(t *testing.T) {
 	f := newRepairFixture(t, true)
 	f.restartRequired = true
 	_, err := repairNative(context.Background(), f.stage, f.root, f.ops)
-	if err == nil || !strings.Contains(err.Error(), "restart Hyprland") {
-		t.Fatalf("unsafe replacement: %v", err)
+	if err == nil {
+		t.Fatal("unsafe replacement accepted")
+	}
+	for _, want := range []string{
+		"RESULT: HYPRLAND RESTART REQUIRED",
+		"Active guard: unchanged and still loaded",
+		"Broker: not stopped by setup",
+		"Fully exit your Hyprland session and log back in",
+		"A config reload is not enough",
+		"Rerun the same hyprland-computer-use setup command",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("missing %q in:\n%s", want, err)
+		}
 	}
 	if f.broker.stopped || !f.guard || f.inspector {
 		t.Fatalf("unexpected side effects: %v", f.events)
@@ -303,8 +387,8 @@ func TestSetupRefusesUnsafeBrokerIdentity(t *testing.T) {
 func TestSetupRestartFailureIsReported(t *testing.T) {
 	f := newRepairFixture(t, true)
 	f.broker.restartErr = errors.New("replacement failed readiness")
-	if restarted, err := repairNative(context.Background(), f.stage, f.root, f.ops); restarted || err == nil || !strings.Contains(err.Error(), "broker was stopped") {
-		t.Fatalf("restart failure hidden: %v %v", restarted, err)
+	if result, err := repairNative(context.Background(), f.stage, f.root, f.ops); result.brokerRestarted || err == nil || !strings.Contains(err.Error(), "broker was stopped") {
+		t.Fatalf("restart failure hidden: %+v %v", result, err)
 	}
 }
 

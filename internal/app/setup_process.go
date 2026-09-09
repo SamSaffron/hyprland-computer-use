@@ -202,6 +202,16 @@ func restartArgs(args []string) []string {
 	return result
 }
 func (p *brokerProcess) close() { _ = unix.Close(p.pidfd) }
+func (p *brokerProcess) currentExecutable() (bool, error) {
+	if exited, err := p.exited(); err != nil || exited {
+		return false, err
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return false, err
+	}
+	return sameFileContents(filepath.Join("/proc", strconv.Itoa(p.pid), "exe"), executable)
+}
 func (p *brokerProcess) exited() (bool, error) {
 	fds := []unix.PollFd{{Fd: int32(p.pidfd), Events: unix.POLLIN}}
 	n, err := unix.Poll(fds, 0)

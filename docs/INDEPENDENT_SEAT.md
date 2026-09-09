@@ -11,7 +11,7 @@ Setup builds the focus-borrowing guard, then tries the independent-seat guard. I
 
 `setup --input-mode=focus-borrowing` explicitly selects the compatibility build. `--experimental-seat` remains a deprecated alias for automatic selection; it is no longer required. `--build-only` builds/publishes without touching the desktop; runtime hook availability can only be checked during live setup.
 
-Once a seat-owning plugin has been loaded, **save work and restart Hyprland before updating or rolling back**. Setup refuses hot replacement before stopping the broker. It never restarts Hyprland for you. Do not use an older installer to bypass this check.
+Once a seat-owning plugin has been loaded, **save work and fully restart the Hyprland session before replacing it with a different build**. A config reload is not enough. Setup compares the active plugin first, so rerunning with an already-current build is non-disruptive; when the build differs, setup prints explicit restart instructions before stopping the broker. It never restarts Hyprland for you or hot-unloads the seat-owning plugin. Do not use an older installer to bypass this check.
 
 Use the new executable for serving and the MCP bridge. Setup may restart a verified broker and clear grants; reconnect MCP and approve again. No services or autostart entries are installed.
 
@@ -24,7 +24,7 @@ The combined guard selects a path from the live root client's resources before e
 - **Seat:** the client bound both agent-seat keyboard and pointer resources. Input uses the separate seat without borrowing native focus.
 - **Fallback:** the client lacks one or both resources. The existing compositor-guarded transaction temporarily borrows/restores native protocol focus. Human input must be idle; held keys/buttons and native grabs can cause refusal.
 
-The green control-grant outline shows **Seat** or **Fallback**. It refreshes from live compositor metadata; if that query fails it says **Unknown**, not a guessed mode. Application identity strings and titles never select a backend or grant authority.
+The green control-grant outline shows **Seat** or **Fallback**. It is keyed by the exact stable window ID and is shown only while that window's workspace is active (or the window is pinned); inactive and unknown workspaces fail closed so the output-level overlay cannot appear over an unrelated window at the same coordinates. It refreshes from live compositor metadata; if the input-mode query fails it says **Unknown**, not a guessed mode. Application identity strings and titles never select a backend or grant authority.
 
 Fallback does not mean global injection. Both paths require the same live window/root lease, visible target, geometry revision, surface selectors and bounds. No failed or partially delivered transaction is retried. Permission denials, stale/foreign surfaces, constraints, IME grabs, invalid popup serials and other safety failures remain errors. An asynchronous menu failure cannot safely be replayed as a fallback click.
 

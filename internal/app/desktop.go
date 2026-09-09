@@ -37,6 +37,7 @@ type Window struct {
 	Mapped   bool   `json:"mapped"`
 	Hidden   bool   `json:"hidden"`
 	Visible  bool   `json:"visible"`
+	Pinned   bool   `json:"pinned"`
 	XWayland bool   `json:"xwayland"`
 	Revision string `json:"revision"`
 }
@@ -206,8 +207,7 @@ func (d *Desktop) capture(ctx context.Context, w Window, maxWidth int) ([]byte, 
 type InputArgs struct {
 	Surface         string   `json:"surface_id,omitempty" jsonschema:"Optional instance-bound surface ID from window_state; with surface_revision, coordinates become surface-local. Omit both for window-local root/subsurface hit testing."`
 	SurfaceRevision string   `json:"surface_revision,omitempty" jsonschema:"Exact selected surface geometry revision from window_state; required with surface_id"`
-	Then            string   `json:"then,omitempty" jsonschema:"Omit, screenshot (permission-checked pixels), or state (surface/dialog metadata) after a completed batch"`
-	MaxWidth        int      `json:"max_width,omitempty" jsonschema:"Post-action screenshot width limit, 0 defaults to 1280, maximum 1920"`
+	Then            string   `json:"then,omitempty" jsonschema:"Omit, screenshot (permission-checked standard-size pixels), or state (surface/dialog metadata) after a completed batch"`
 	Window          string   `json:"window_id" jsonschema:"Window ID returned by list_windows"`
 	Revision        string   `json:"revision" jsonschema:"Exact geometry revision from list_windows or view_window"`
 	Actions         []Action `json:"actions" jsonschema:"Ordered actions, maximum 128; coordinates are window-local logical pixels by default, or selected-surface-local when surface_id is provided"`
@@ -322,9 +322,6 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (map[str
 	defer cancel()
 	if a.Then != "" && a.Then != "screenshot" && a.Then != "state" {
 		return nil, errors.New("then must be omitted, screenshot, or state")
-	}
-	if a.MaxWidth < 0 || a.MaxWidth > 1920 || (a.MaxWidth != 0 && a.Then != "screenshot") {
-		return nil, errors.New("max_width requires then=screenshot and must be 0–1920")
 	}
 	if len(a.Actions) == 0 || len(a.Actions) > 128 {
 		return nil, errors.New("actions must contain 1–128 items")

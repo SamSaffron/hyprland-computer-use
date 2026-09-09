@@ -65,7 +65,7 @@ Ask the agent to list windows and request access. Approve in the local console, 
 
 ## Update or stop
 
-- **Update:** rerun the installer (or replace a source-built executable), then run `hyprland-computer-use setup`. It replaces a safely unloadable guard and restarts an existing broker. If the independent seat is loaded, save work and restart Hyprland first. Skip `serve` if setup reports a restart. Grants reset; reconnect your MCP client.
+- **Update/check:** rerun the installer (or replace a source-built executable), then run `hyprland-computer-use setup`. Setup is idempotent: if the guard and running broker already match, it reports that everything is OK without restarting either one or clearing grants. It updates only stale components. If an active independent-seat guard differs, setup explicitly requires a full Hyprland session restart; a config reload is not enough. Follow the printed `RESULT` and `NEXT` sections.
 - **Stop:** run `hyprland-computer-use stop`, or press Ctrl+C in the broker terminal.
 - **Offline build:** `hyprland-computer-use setup --build-only` does not touch the compositor or broker.
 
@@ -75,7 +75,7 @@ No autostart service or compositor-config edit is installed. Service/config-mana
 
 Setup prefers the independent seat and falls back to the compositor-guarded focus-borrowing build when the seat build or required hook is unavailable. During execution, clients with both agent-seat devices use **Seat**; other clients use **Fallback**, under the same window grant. The green grant outline shows the selected path. Fallback temporarily borrows native protocol focus and requires idle human input; it is not independent input.
 
-**Once the independent-seat plugin is loaded, updating or rolling back requires a Hyprland restart—do not hot-unload it.** Setup refuses unsafe replacement and does not restart your desktop. See [automatic input and compatibility](docs/INDEPENDENT_SEAT.md) for limitations and tested cases.
+**An active independent-seat plugin requires a full Hyprland restart only when the requested build differs.** Rerunning setup with the already-current plugin is a non-disruptive check; do not hot-unload it yourself. When replacement is needed, setup prints `RESULT: HYPRLAND RESTART REQUIRED` and exact next steps.
 
 ## Go deeper
 

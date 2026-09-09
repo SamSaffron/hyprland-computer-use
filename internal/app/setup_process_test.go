@@ -74,6 +74,33 @@ func TestBrokerRestartReadinessAndContext(t *testing.T) {
 		t.Fatalf("non-private restart log: %v", err)
 	}
 }
+func TestBrokerCurrentExecutable(t *testing.T) {
+	fd, err := unix.PidfdOpen(os.Getpid(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &brokerProcess{pid: os.Getpid(), pidfd: fd}
+	defer p.close()
+	if current, err := p.currentExecutable(); err != nil || !current {
+		t.Fatalf("current test executable not recognized: %v %v", current, err)
+	}
+
+	child := exec.Command("sleep", "30")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = child.Process.Kill(); _ = child.Wait() }()
+	childFD, err := unix.PidfdOpen(child.Process.Pid, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := &brokerProcess{pid: child.Process.Pid, pidfd: childFD}
+	defer other.close()
+	if current, err := other.currentExecutable(); err != nil || current {
+		t.Fatalf("different executable accepted: %v %v", current, err)
+	}
+}
+
 func TestBrokerStopUsesPinnedProcess(t *testing.T) {
 	child := exec.Command("sleep", "30")
 	if err := child.Start(); err != nil {

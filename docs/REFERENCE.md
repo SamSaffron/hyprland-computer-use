@@ -22,7 +22,7 @@ The tray item uses the StatusNotifierItem protocol and works with a tray host su
 
 The plugin has a trusted same-UID local control channel used by the broker; it does not authenticate one particular process. It checks expiry independently, rejects stale geometry/out-of-bounds pointer coordinates, and invalidates leases when the bound window/surface disappears. Synthetic presses are released inside each transaction, including exception cleanup; no held input spans broker requests. Its exact Hyprland build hash must match the headers used to build it.
 
-The Quickshell outline is an **advisory reflection of broker state**, not the security enforcement mechanism. Enforcement is in the broker and plugin. See [SECURITY.md](../SECURITY.md) for the trust boundary and important exclusions.
+The Quickshell outline is an **advisory reflection of broker state**, not the security enforcement mechanism. It is an output-level overlay keyed by the exact stable window ID and gated by Quickshell's live active-workspace state; it is hidden on inactive or unknown workspaces so it cannot mark an unrelated window occupying the same coordinates. Enforcement remains in the broker and plugin. See [SECURITY.md](../SECURITY.md) for the trust boundary and important exclusions.
 
 The executable is **`hyprland-computer-use`**. Use **`computer-use`** as the MCP server name in your client configuration.
 
@@ -74,11 +74,11 @@ Coordinates are **window-local logical pixels**, not scaled screenshot pixels. `
 - `frame_id`: SHA-256 of the encoded PNG; equal encoded content has the same ID, even across captures. It is **not an accepted input precondition**, an accessibility snapshot, or evidence the app is still unchanged.
 - `captured_at`: UTC broker timestamp after capture and its safety checks, not the compositor's presentation timestamp.
 
-`max_width` may be 0 (default 1280) through 1920; negative values are rejected. PNG transport remains bounded to 16 MiB. No crop, JPEG/WebP, or semantic observation is implemented. The client must update coordinates after geometry changes. A revision protects against compositor geometry changes, **not arbitrary in-app content changes**.
+For `view_window` only, optional `max_width` may be 0 (default 1280) through 1920; negative values are rejected. `input_window` has no capture-size argument because input coordinates are always logical window coordinates, and its optional post-action screenshot uses the standard 1280 maximum. PNG transport remains bounded to 16 MiB. No crop, JPEG/WebP, or semantic observation is implemented. The client must update coordinates after geometry changes. A revision protects against compositor geometry changes, **not arbitrary in-app content changes**.
 
 ### Batch recovery and action-and-observe
 
-Set `"then": "screenshot"` on `input_window` for an immediate post-batch PNG, optionally with `max_width`. A nonzero `max_width` requires `then: "screenshot"`. All options are validated before input. The screenshot runs only after a completed batch and uses a fresh observation check and fresh geometry. Under the existing grant model, control and record grants include observation; observation alone never includes control or recording. There is no new permission bypass.
+Set `"then": "screenshot"` on `input_window` for an immediate post-batch PNG at the standard capture size. The screenshot runs only after a completed batch and uses a fresh observation check and fresh geometry. Under the existing grant model, control and record grants include observation; observation alone never includes control or recording. There is no new permission bypass.
 
 The result metadata is available in both MCP `structuredContent` and a JSON text block, including runtime failures and approval responses. Images are additional content blocks. The result retains `status: completed`, `actions` and `window_id`, with nested `observation` metadata and PNG content. If capture fails or permission has gone away, `observation.status` is `failed` (or `approval_required` with a request ID), but the **input remains completed**. Retry observation, not the batch. This captures immediately; it does not wait for application rendering or promise a settled frame.
 

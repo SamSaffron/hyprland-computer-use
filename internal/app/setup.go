@@ -152,13 +152,14 @@ func runSetup(args []string) error {
 			if err := os.Rename(filepath.Join(stage, "build", "guard-seat.so"), plugin); err != nil {
 				return err
 			}
-			fmt.Fprintln(os.Stderr, "Automatic input: independent seat preferred, guarded focus borrowing for unsupported clients. Plugin updates require a Hyprland restart; never hot-unload.")
+			fmt.Fprintln(os.Stderr, "Input: independent seat with guarded fallback.")
 		} else {
-			fmt.Fprintln(os.Stderr, "Using guarded focus borrowing; independent seat unavailable or disabled.")
+			fmt.Fprintln(os.Stderr, "Input: guarded focus.")
 		}
 		return nil
 	}
-	loaded, restarted := !*buildOnly && *load, false
+	loaded := !*buildOnly && *load
+	var repair repairResult
 	if loaded {
 		header, err := command(ctx, filepath.Join(stage, "build", "header-version"))
 		if err != nil {
@@ -175,7 +176,7 @@ func runSetup(args []string) error {
 		keep = true
 		ops := localRepairOps(dir, stage, root)
 		ops.selectInput = selectPlugin
-		restarted, err = repairNative(ctx, stage, root, ops)
+		repair, err = repairNative(ctx, stage, root, ops)
 		if err != nil {
 			return fmt.Errorf("%w\nBuild retained at %s", err, stage)
 		}
@@ -188,7 +189,7 @@ func runSetup(args []string) error {
 		}
 	}
 	keep = true
-	printSetupNextSteps(os.Stderr, plugin, loaded, restarted)
+	printSetupNextSteps(os.Stderr, loaded, repair)
 
 	return nil
 }
@@ -207,17 +208,18 @@ func checkHyprlandVersion(header, version []byte) error {
 	return nil
 }
 
-func printSetupNextSteps(w io.Writer, plugin string, loaded, restarted bool) {
+func printSetupNextSteps(w io.Writer, loaded bool, repair repairResult) {
 	if !loaded {
-		fmt.Fprintf(w, "Build installed. Load/repair in your desktop session with: hyprland-computer-use setup\nManual load: hyprctl plugin load %s\n", shellQuote(plugin))
+		fmt.Fprintf(w, "Build complete.\nNext: run in Hyprland:\n  hyprland-computer-use setup\n")
 		return
 	}
-	if restarted {
-		fmt.Fprintln(w, "Setup complete. Reconnect your MCP client; open the console from the tray. New permission approval is required.")
-	} else {
-		fmt.Fprintln(w, "Setup complete. Start the broker: hyprland-computer-use serve\nThen click its tray icon to open the permission console.")
+	if repair.brokerRestarted {
+		fmt.Fprintln(w, "Setup complete. Broker restarted.\nNext: reconnect your MCP client and approve permissions again from the tray icon.")
+		return
 	}
-
+	if repair.guardUnchanged && repair.brokerRunning {
+		fmt.Fprintln(w, "Ready. Broker is running.\nOpen the tray icon to manage permissions.")
+		return
+	}
+	fmt.Fprintln(w, "Setup complete.\nNext: start the broker:\n  hyprland-computer-use serve\nThen open permissions from its tray icon.")
 }
-
-func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }

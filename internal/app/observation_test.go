@@ -220,8 +220,9 @@ func TestActionAndObserve(t *testing.T) {
 	}
 }
 
-func TestInvalidObservationOptionsHaveNoEffects(t *testing.T) {
-	for _, a := range []InputArgs{{Then: "ui"}, {Then: "screenshot", MaxWidth: -1}, {Then: "screenshot", MaxWidth: 1921}, {MaxWidth: 100}} {
+func TestInvalidThenOptionHasNoEffects(t *testing.T) {
+	for _, then := range []string{"ui", "capture", "screenshot:1920"} {
+		a := InputArgs{Then: then}
 		b, calls := inputTransactionFixture(t, "")
 		a.Window = "abc"
 		a.Revision = "20,40,600,800"
@@ -229,6 +230,42 @@ func TestInvalidObservationOptionsHaveNoEffects(t *testing.T) {
 		if _, err := b.input(context.Background(), "a", a); err == nil || len(calls) != 0 {
 			t.Fatal("options not prevalidated")
 		}
+	}
+}
+
+func TestInputWindowSchemaOmitsCaptureWidth(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := newBroker(nil).newMCPServer("a", nil).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	client, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil).Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	listed, err := client.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]string{}
+	for _, tool := range listed.Tools {
+		if tool.Name == "input_window" || tool.Name == "view_window" {
+			schema, err := json.Marshal(tool.InputSchema)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found[tool.Name] = string(schema)
+		}
+	}
+	if strings.Contains(found["input_window"], "max_width") {
+		t.Fatalf("input schema exposes unrelated capture sizing: %s", found["input_window"])
+	}
+	if !strings.Contains(found["view_window"], "max_width") {
+		t.Fatalf("view schema lost optional capture sizing: %s", found["view_window"])
 	}
 }
 

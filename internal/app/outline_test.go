@@ -10,6 +10,65 @@ import (
 	"time"
 )
 
+func TestOutlineIsWorkspaceScoped(t *testing.T) {
+	source, err := consoleBundle.ReadFile("quickshell/shell.qml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shell := string(source)
+	for _, want := range []string{
+		"import Quickshell.Hyprland",
+		"WorkspaceVisibility { id: workspaceVisibility }",
+		"visible: workspaceVisibility.active(target.window, Hyprland.workspaces.values)",
+	} {
+		if !strings.Contains(shell, want) {
+			t.Errorf("outline missing workspace gate %q", want)
+		}
+	}
+}
+
+func TestWorkspaceVisibility(t *testing.T) {
+	if os.Getenv("COMPUTER_USE_TEST_QML") != "1" {
+		t.Skip("set COMPUTER_USE_TEST_QML=1 for offscreen workspace visibility test")
+	}
+	dir := t.TempDir()
+	component, err := consoleBundle.ReadFile("quickshell/WorkspaceVisibility.qml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "WorkspaceVisibility.qml"), component, 0600); err != nil {
+		t.Fatal(err)
+	}
+	qml := `import QtQuick
+import Quickshell
+ShellRoot {
+  id: root
+  WorkspaceVisibility { id: visibility }
+  function check(ok,message) { if(!ok) { console.error(message); Qt.exit(1); } }
+  Timer { interval: 50; running: true; repeat: false; onTriggered: {
+    let spaces=[{id:1,active:true},{id:2,active:false}];
+    root.check(visibility.active({workspace:{id:1},pinned:false},spaces),"active workspace hidden");
+    root.check(!visibility.active({workspace:{id:2},pinned:false},spaces),"inactive workspace shown");
+    root.check(visibility.active({workspace:{id:2},pinned:true},spaces),"pinned window hidden");
+    root.check(!visibility.active({workspace:{id:3},pinned:false},spaces),"unknown workspace guessed visible");
+    root.check(!visibility.active({},spaces),"missing workspace guessed visible");
+    console.log("WORKSPACE_VISIBILITY_OK"); Qt.quit();
+  } }
+}`
+	path := filepath.Join(dir, "test.qml")
+	if err := os.WriteFile(path, []byte(qml), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "dbus-run-session", "--", "qs", "--no-color", "-p", path)
+	cmd.Env = append(os.Environ(), "QT_QPA_PLATFORM=offscreen", "XDG_RUNTIME_DIR="+dir, "XDG_CACHE_HOME="+dir, "WAYLAND_DISPLAY=", "WAYLAND_SOCKET=", "HYPRLAND_INSTANCE_SIGNATURE=")
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "WORKSPACE_VISIBILITY_OK") {
+		t.Fatalf("workspace visibility: %v\n%s", err, out)
+	}
+}
+
 // Run the production model-update and delegate-binding snippets with real
 // Quickshell Variants, but plain QtObjects instead of compositor surfaces.
 // Offscreen Qt + a private bus/runtime never opens the desktop permission UI.

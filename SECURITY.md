@@ -18,7 +18,7 @@ The green grant marker reports **Seat** or **Fallback** from live compositor cap
 
 This is **not complete compositor or application multi-seat isolation**. GTK3 popup requests with default-seat serials are refused; same-process menus can swallow human input; IME, clipboard, DnD, constraints and activation are not independently implemented. App-created windows may still change desktop activation. The hook depends on an exact-version private compositor API, and capture is unchanged. See [INDEPENDENT_SEAT.md](docs/INDEPENDENT_SEAT.md) for tested cases and limitations.
 
-Hot unload with connected clients is unsupported. The updated setup inspector refuses to replace this variant before stopping the broker; save work and restart Hyprland before updating or rollback. Old setup executables do not enforce this new restriction. No host deployment or policy change happens merely by building the variant.
+Hot unload with connected clients is unsupported. Setup compares the requested guard with the active plugin: an identical build is left running, while a differing seat-owning build produces explicit full-session restart instructions before the broker is stopped. A config reload is not sufficient. Old setup executables do not enforce this restriction. No host deployment or policy change happens merely by building the variant.
 
 ## Enforced paths
 

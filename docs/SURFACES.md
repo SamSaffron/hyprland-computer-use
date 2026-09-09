@@ -75,7 +75,7 @@ Both selector fields are required together. A `focus` action with a surface sele
 
 Surface revisions describe bounds, not app content or descendant-tree freshness. Each delivery resolves the current tree. Do not treat a surface revision as an accessibility locator or UI snapshot token.
 
-`then: "state"` returns a nested `window_state` result after a completed batch. It does not require pixel-observation permission. If discovery fails because the parent closes or the guard is unavailable, the outer input result remains **completed** and the nested result is **failed**. Retry discovery, not the input batch. `max_width` is valid only with `then: "screenshot"`.
+`then: "state"` returns a nested `window_state` result after a completed batch. It does not require pixel-observation permission. If discovery fails because the parent closes or the guard is unavailable, the outer input result remains **completed** and the nested result is **failed**. Retry discovery, not the input batch. `then: "screenshot"` uses the standard capture size automatically; capture sizing is intentionally not part of the input protocol.
 
 Post-state is immediate, not a lifecycle/render wait. A menu or dialog may appear after it returns. Call `window_state` again if needed. To operate a reported transient child, request/obtain a grant for the child's own `window_id`, then use the child's geometry revision. After closing it, rediscover the surviving parent and its surfaces. If the parent has closed, use `list_windows`; do not redirect an old selector to another window.
 

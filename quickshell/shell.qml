@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
+import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Widgets
 import Quickshell.Wayland
@@ -95,6 +96,7 @@ ShellRoot {
             MouseArea { anchors.fill:parent; onClicked:root.openPanel=!root.openPanel; z:-1 }
         }
     }
+    WorkspaceVisibility { id: workspaceVisibility }
     Variants {
         model: root.targetIDs
         PanelWindow {
@@ -102,6 +104,7 @@ ShellRoot {
             property var target: (root.state.targets || []).find(t => t.window.id===modelData)
                 || {window:{at:[0,0],size:[0,0]},label:"",remaining_seconds:0}
             screen: Quickshell.screens.find(s => target.window.at[0]>=s.x && target.window.at[0]<s.x+s.width && target.window.at[1]>=s.y && target.window.at[1]<s.y+s.height) || Quickshell.screens[0]
+            visible: workspaceVisibility.active(target.window, Hyprland.workspaces.values)
             anchors { top:true; left:true }
             margins { left:Math.max(0,target.window.at[0]-screen.x);top:Math.max(0,target.window.at[1]-screen.y) }
             implicitWidth:target.window.size[0];implicitHeight:target.window.size[1]

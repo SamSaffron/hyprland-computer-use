@@ -108,7 +108,7 @@ func (b *Broker) inputTool(ctx context.Context, client string, a InputArgs) (*mc
 		meta["window_state"] = state
 		return resultContent(meta, nil, false), nil, nil
 	}
-	observation, data, err := b.observe(ctx, client, a.Window, a.MaxWidth)
+	observation, data, err := b.observe(ctx, client, a.Window, 0)
 	if err != nil {
 		// The batch completed: never turn an observation failure into a request to
 		// replay input. Preserve its result and report the observation separately.

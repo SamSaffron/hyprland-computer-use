@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,7 +16,13 @@ import (
 type repairBroker interface {
 	stop(context.Context) error
 	restart(context.Context, string) error
+	currentExecutable() (bool, error)
 	close()
+}
+type repairResult struct {
+	brokerRestarted bool
+	guardUnchanged  bool
+	brokerRunning   bool
 }
 type loadedPlugin struct {
 	Name   string `json:"name"`
@@ -42,6 +49,7 @@ type repairOps struct {
 	lock        func() (io.Closer, error)
 	status      func(context.Context) error
 	publish     func() error
+	equivalent  func(string, string) (bool, error)
 }
 
 func localRepairOps(dir, stage, root string) repairOps {
@@ -68,7 +76,8 @@ func localRepairOps(dir, stage, root string) repairOps {
 		status: func(ctx context.Context) error {
 			return (&Desktop{Dir: dir}).guard(ctx, map[string]any{"op": "status"})
 		},
-		publish: func() error { return publishNative(stage, root) },
+		publish:    func() error { return publishNative(stage, root) },
+		equivalent: sameFileContents,
 	}
 }
 func pluginAction(ctx context.Context, ops repairOps, action, path string) error {
@@ -148,9 +157,6 @@ func inspectGuard(ctx context.Context, stage string, ops repairOps) (result insp
 		if g.Path == "" || g.Path == path {
 			return result, errors.New("invalid loaded guard path")
 		}
-		if g.RestartRequired {
-			return result, errors.New("independent seat is loaded: save your work and restart Hyprland before updating or rolling back; do not hot-unload this plugin")
-		}
 		if g.Configured {
 			return result, errors.New("guard is loaded from Hyprland configuration; remove that plugin entry before setup (setup will not edit your compositor config)")
 		}
@@ -158,36 +164,125 @@ func inspectGuard(ctx context.Context, stage string, ops repairOps) (result insp
 	return result, nil
 }
 
+func sameFileContents(a, b string) (bool, error) {
+	infoA, err := os.Stat(a)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	infoB, err := os.Stat(b)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !infoA.Mode().IsRegular() || !infoB.Mode().IsRegular() || infoA.Size() != infoB.Size() {
+		return false, nil
+	}
+	digest := func(path string) ([sha256.Size]byte, error) {
+		file, err := os.Open(path)
+		if err != nil {
+			return [sha256.Size]byte{}, err
+		}
+		defer file.Close()
+		hash := sha256.New()
+		if _, err := io.Copy(hash, file); err != nil {
+			return [sha256.Size]byte{}, err
+		}
+		var sum [sha256.Size]byte
+		copy(sum[:], hash.Sum(nil))
+		return sum, nil
+	}
+	digestA, err := digest(a)
+	if err != nil {
+		return false, err
+	}
+	digestB, err := digest(b)
+	return digestA == digestB, err
+}
+
 // Build/hash validation happens before this function. No rollback loads an
 // outdated plugin or revives old grants: after disruption, failures stay closed.
-func repairNative(ctx context.Context, stage, root string, ops repairOps) (restarted bool, err error) {
+func repairNative(ctx context.Context, stage, root string, ops repairOps) (result repairResult, err error) {
 	if err = ctx.Err(); err != nil {
-		return false, err
+		return result, err
 	}
 	existing, err := inspectGuard(ctx, stage, ops)
 	if err != nil {
-		return false, err
+		return result, err
 	}
 	if ops.selectInput != nil {
 		if err := ops.selectInput(existing.IndependentSeatHookAvailable); err != nil {
-			return false, err
+			return result, err
 		}
 	}
+
+	plugin := filepath.Join(stage, "build", "guard.so")
+	if len(existing.Guards) == 1 {
+		result.guardUnchanged, err = ops.equivalent(existing.Guards[0].Path, plugin)
+		if err != nil {
+			return result, fmt.Errorf("compare active and desired compositor guards: %w", err)
+		}
+		if !result.guardUnchanged && existing.Guards[0].RestartRequired {
+			return result, errors.New(`RESULT: HYPRLAND RESTART REQUIRED
+  Reason: the active independent-seat guard differs from the requested build and cannot be safely replaced while Hyprland is running
+  Active guard: unchanged and still loaded
+  Broker: not stopped by setup
+  New build: retained but not active
+
+NEXT:
+  1. Save your work.
+  2. Fully exit your Hyprland session and log back in.
+     A config reload is not enough; do not manually hot-unload the plugin.
+  3. Rerun the same hyprland-computer-use setup command.
+  4. Follow the RESULT and NEXT sections printed by that run.`)
+		}
+	}
+
 	peer, err := ops.peer()
 	if err != nil {
-		return false, err
+		return result, err
 	}
 	if peer != 0 && (peer != existing.PID || len(existing.Guards) == 0) {
-		return false, errors.New("guard socket does not match this Hyprland session; nothing was stopped")
+		return result, errors.New("guard socket does not match this Hyprland session; nothing was stopped")
 	}
 	broker, err := ops.broker()
 	if err != nil {
-		return false, err
+		return result, err
 	}
 	if broker != nil {
 		defer broker.close()
+	}
+
+	if result.guardUnchanged {
+		if err = ops.status(ctx); err != nil {
+			return result, fmt.Errorf("active guard is not ready: %w", err)
+		}
+		if broker == nil {
+			if err = ops.publish(); err != nil {
+				return result, err
+			}
+			return result, nil
+		}
+		current, err := broker.currentExecutable()
+		if err != nil {
+			return result, fmt.Errorf("compare running and requested broker executables: %w", err)
+		}
+		if current {
+			if err = ops.publish(); err != nil {
+				return result, err
+			}
+			result.brokerRunning = true
+			return result, nil
+		}
+	}
+
+	if broker != nil {
 		if err = broker.stop(ctx); err != nil {
-			return false, err
+			return result, err
 		}
 		defer func() {
 			if err != nil {
@@ -197,66 +292,68 @@ func repairNative(ctx context.Context, stage, root string, ops repairOps) (resta
 	}
 	lock, err := ops.lock()
 	if err != nil {
-		return false, err
+		return result, err
 	}
 	defer lock.Close()
 	// Reject an uncoordinated legacy restart before replacing its guard.
 	competing, err := ops.broker()
 	if err != nil {
-		return false, err
+		return result, err
 	}
 	if competing != nil {
 		competing.close()
-		return false, errors.New("another broker appeared during repair; guard left unchanged")
+		return result, errors.New("another broker appeared during repair; guard left unchanged")
 	}
-	if len(existing.Guards) == 1 {
-		fmt.Fprintln(os.Stderr, "Replacing loaded compositor guard.")
-		if err = pluginAction(ctx, ops, "unload", existing.Guards[0].Path); err != nil {
-			return false, err
+	if !result.guardUnchanged {
+		if len(existing.Guards) == 1 {
+			fmt.Fprintln(os.Stderr, "Replacing loaded compositor guard.")
+			if err = pluginAction(ctx, ops, "unload", existing.Guards[0].Path); err != nil {
+				return result, err
+			}
+		}
+		present, err := pluginPresent(ctx, ops, "computer-use-guard")
+		if err != nil {
+			return result, err
+		}
+		if present {
+			return result, errors.New("guard is still loaded; refusing to load a second copy")
+		}
+		if err = pluginAction(ctx, ops, "load", plugin); err != nil {
+			return result, err
+		}
+		present, err = pluginPresent(ctx, ops, "computer-use-guard")
+		if err != nil {
+			return result, err
+		}
+		if !present {
+			return result, errors.New("new guard was not registered")
+		}
+		peer, err = ops.peer()
+		if err != nil {
+			return result, err
+		}
+		if peer != existing.PID {
+			return result, errors.New("new guard socket does not belong to the inspected compositor")
+		}
+		if err = ops.status(ctx); err != nil {
+			return result, fmt.Errorf("new guard is not ready: %w", err)
 		}
 	}
-	present, err := pluginPresent(ctx, ops, "computer-use-guard")
-	if err != nil {
-		return false, err
-	}
-	if present {
-		return false, errors.New("guard is still loaded; refusing to load a second copy")
-	}
-	plugin := filepath.Join(stage, "build", "guard.so")
-	if err = pluginAction(ctx, ops, "load", plugin); err != nil {
-		return false, err
-	}
-	present, err = pluginPresent(ctx, ops, "computer-use-guard")
-	if err != nil {
-		return false, err
-	}
-	if !present {
-		return false, errors.New("new guard was not registered")
-	}
-	peer, err = ops.peer()
-	if err != nil {
-		return false, err
-	}
-	if peer != existing.PID {
-		return false, errors.New("new guard socket does not belong to the inspected compositor")
-	}
-	if err = ops.status(ctx); err != nil {
-		return false, fmt.Errorf("new guard is not ready: %w", err)
-	}
 	if err = ops.publish(); err != nil {
-		return false, err
+		return result, err
 	}
 	// New brokers acquire the same lock during their entire lifetime.
 	if err = lock.Close(); err != nil {
-		return false, err
+		return result, err
 	}
 	if broker != nil {
 		if err = broker.restart(ctx, root); err != nil {
-			return false, err
+			return result, err
 		}
-		return true, nil
+		result.brokerRestarted = true
+		result.brokerRunning = true
 	}
-	return false, nil
+	return result, nil
 }
 func publishNative(stage, root string) error {
 	link := filepath.Join(stage, "current-link")
