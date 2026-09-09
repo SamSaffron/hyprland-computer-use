@@ -1,6 +1,8 @@
 # Multi-input demonstration
 
-[Watch the video](demo.mp4) · [Back to the README](../README.md)
+[Download the video](demo.mp4?raw=true) · [Static preview](demo-poster.webp) · [Back to the README](../README.md)
+
+The README uses a 1280-pixel-wide, 10-fps animated WebP preview so the demonstration plays directly on GitHub without unsupported `<video>` markup or an external host. Viewers requesting reduced motion receive the static poster instead. The downloadable MP4 retains the full 1080p / 30-fps presentation.
 
 The 30-second silent video shows three real windows on one disposable Hyprland desktop:
 
@@ -36,4 +38,4 @@ This demonstrates independent input in the tested applications, **not universal 
 
 Window grants are not an OS sandbox. The compositor, broker, local desktop processes, and simulated-human harness run within the trusted lab environment; a controlled terminal has transitive shell authority. Read [the security model](../SECURITY.md).
 
-Only the selected public video and poster are included here. Raw takes, model logs, and disposable test harnesses are not shipped with the project.
+Only the selected public video, animated preview, and poster are included here. Raw takes, model logs, and disposable test harnesses are not shipped with the project.

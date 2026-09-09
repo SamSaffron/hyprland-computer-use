@@ -6,9 +6,14 @@ Let an MCP agent view and control **windows you approve**, with a local Quickshe
 
 With seat-aware applications, the agent can work in its approved window **while you keep typing and using the mouse in yours**.
 
-[![Watch the 30-second demo: term-llm builds a chart in an approved terminal while native typing continues in a separate editor](docs/demo-poster.webp)](docs/demo.mp4)
+<a href="docs/demo.mp4?raw=true">
+  <picture>
+    <source media="(prefers-reduced-motion: reduce)" srcset="docs/demo-poster.webp">
+    <img src="docs/demo-preview.webp" alt="30-second live demo: term-llm builds a chart in an approved terminal while native typing continues in a separate editor" width="1280">
+  </picture>
+</a>
 
-**[▶ Watch the 30-second demo](docs/demo.mp4)** — real Hyprland footage showing term-llm, its controlled window, and a second window receiving independent input. Human input is simulated; accelerated sections are labelled. [Recording details and limitations](docs/DEMO.md).
+**[Download the 30-second video · 1080p MP4](docs/demo.mp4?raw=true)** · [Static preview](docs/demo-poster.webp). Real Hyprland footage showing term-llm, its controlled window, and a second window receiving independent input. Human input is simulated; accelerated sections are labelled. [Recording details and limitations](docs/DEMO.md).
 
 > **Threat model:** MCP clients are untrusted, but the compositor plugin, broker, local permission UI, and other processes running as your desktop user are trusted. **An agent with a shell can approve its own requests.** `ui.sock` trusts same-UID callers and does not authenticate Quickshell: “only the local UI may grant” is a transport/API convention, not process isolation. Sharing a terminal transitively grants shell authority. Do not give an agent a same-user shell if you rely on human-only approval. This is scoped computer-use plumbing, **not an OS sandbox**; read [SECURITY.md](SECURITY.md) before exposing it to an agent.
 
