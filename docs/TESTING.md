@@ -43,7 +43,7 @@ Linux amd64 and arm64 `CGO_ENABLED=0` builds passed; ARM64 was cross-compiled on
 
 Installer tests use fixture archives and mocked curl/uname to cover latest/pinned versions, amd64/arm64 selection, checksum mismatch/missing/duplicate checksums, failed downloads, unsupported platforms, missing archive binaries, path handling, and atomic symlink replacement. The release-helper test mocks git/gh, including tag creation/push and workflow waiting; no real repository mutation or publication occurs. Shell checks and YAML parsing passed.
 
-**Not yet verified:** GoReleaser itself was not available locally, so no local GoReleaser snapshot or end-to-end GitHub publication was run. CI is configured to build non-publishing snapshots, and the tag workflow publishes archives/checksums after tests. Neither new workflow has run on GitHub in this session. No release publication, live plugin replacement, or host service change was performed.
+The initial public `v0.0.1` release completed the hosted test and release workflows. GoReleaser published amd64/arm64 archives plus `checksums.txt`; both downloaded archives matched the manifest and contained the executable, documentation, notices, and protocol XML. A clean Go 1.25 container successfully ran `go install github.com/samsaffron/hyprland-computer-use/cmd/hyprland-computer-use@latest`, resolving the canonical module as `v0.0.1`. Public installer validation downloaded the latest release and reported the expected embedded version. Live plugin replacement and `serve` startup remain part of the disposable-session gate, not container evidence.
 
 ## Automatic local setup repair — 8 September
 
@@ -115,7 +115,7 @@ Record the exact Hyprland build hash, guard/broker revision, toolkit/app version
 
 ## Go quality checks
 
-`make fmt` applies `go fmt ./...`; `make fmt-check` rejects unformatted Go files without rewriting them; `make vet` runs `go vet ./...`. `make test` requires both Go checks and the standalone native transaction unit tests before running `go test -race ./...`. The GitHub Actions Go workflow runs these checks and builds the standalone executable on pushes and pull requests. XKB, offscreen Quickshell, private-bus tray tests, native plugin builds, and live desktop tests remain separately invoked checks rather than assumed CI coverage. Locally, `make fmt`, `make test`, and the static build passed. A scratch-module negative check confirmed that `fmt-check` rejects unformatted code without changing it, then passes after `make fmt`. The hosted workflow has been added but has not been run on GitHub in this session.
+`make fmt` applies `go fmt ./...`; `make fmt-check` rejects unformatted Go files without rewriting them; `make vet` runs `go vet ./...`. `make test` requires both Go checks and the standalone native transaction unit tests before running `go test -race ./...`. The GitHub Actions Go workflow runs these checks and builds the standalone executable on pushes and pull requests. Its pinned Arch job also compiles both real guard variants, setup helpers, and native tests against the documented Hyprland 0.56.2 headers, then exercises embedded `setup --build-only`. XKB, offscreen Quickshell, private-bus tray tests, and live desktop tests remain separately invoked checks. The hosted Go and native jobs passed for the initial public release.
 
 ## Automated and live checks
 

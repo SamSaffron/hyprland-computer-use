@@ -2,7 +2,7 @@
 
 [Quick start](../README.md) · [Setup](SETUP.md) · [Development](DEVELOPMENT.md)
 
-This uses the same **GoReleaser + tagged GitHub Actions release + per-user installer** pattern as term-llm. No release has been published as part of implementing this workflow.
+This uses a **GoReleaser + tagged GitHub Actions release + per-user installer** pipeline. The initial public release verified archive and checksum publication; follow the same process for subsequent releases.
 
 ## What gets shipped
 
@@ -39,7 +39,14 @@ scripts/release.sh v0.1.0 --wait
 
 The tag triggers [release.yml](../.github/workflows/release.yml): tests run first, then GoReleaser builds both architectures and uploads archives/checksums to the GitHub release. It uses the workflow's `GITHUB_TOKEN` with `contents: write`; no Homebrew tap or additional deployment key is needed. Prerelease tags are marked automatically by GoReleaser; the convenience script accepts stable `vMAJOR.MINOR.PATCH` tags only.
 
-After publishing the first release, remove the first-release-pending note from the README.
+After publication, verify both installer modes from a clean environment:
+
+```sh
+sh install.sh
+sh install.sh --version v0.1.0
+```
+
+Check the installed version, run `setup`, and start `serve` inside a disposable supported Hyprland session. A compositor-free container can validate `setup --build-only`, but cannot substitute for the live plugin and broker check.
 
 ## Installer behavior
 
