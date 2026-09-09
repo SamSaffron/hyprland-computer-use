@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,7 +24,9 @@ jobs:
           cache: true
       - name: Test before packaging
         run: make test
-      - name: Publish release archives and checksums
+      - name: Install cosign for keyless checksum signing
+        uses: sigstore/cosign-installer@v3.9.2
+      - name: Publish signed release archives and checksums
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser

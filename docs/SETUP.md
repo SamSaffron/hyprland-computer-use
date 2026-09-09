@@ -26,7 +26,7 @@ sh install.sh --version v0.1.0 --install-dir "$HOME/.local/bin"
 
 **You only need to copy `hyprland-computer-use` to the target desktop.** It bundles the native compositor-plugin source, build recipes, Wayland protocol XML and Quickshell UI. You do not need the source checkout or separate QML files there. System dependencies are still required.
 
-If you are building the executable yourself, install **Go 1.25 or newer** and make, then run `make build/hyprland-computer-use` in this checkout. The distributable is `build/hyprland-computer-use`.
+If you are building the executable yourself, install **Go 1.26.6 or newer** and make, then run `make build/hyprland-computer-use` in this checkout. The distributable is `build/hyprland-computer-use`.
 
 ### 1. Install system dependencies
 

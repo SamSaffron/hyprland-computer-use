@@ -78,6 +78,21 @@ TMP=$(mktemp -d)
 printf 'Downloading %s\n' "$ASSET"
 curl -fsSL -o "$TMP/$ASSET" "$BASE/$ASSET" || fail "Release download failed"
 curl -fsSL -o "$TMP/checksums.txt" "$BASE/checksums.txt" || fail "Checksum download failed"
+if command -v cosign >/dev/null 2>&1; then
+    curl -fsSL -o "$TMP/checksums.txt.sig" "$BASE/checksums.txt.sig" || fail "Signature download failed"
+    curl -fsSL -o "$TMP/checksums.txt.pem" "$BASE/checksums.txt.pem" || fail "Signing certificate download failed"
+    IDENTITY="https://github.com/samsaffron/hyprland-computer-use/.github/workflows/release.yml@refs/tags/$VERSION"
+    cosign verify-blob \
+        --certificate "$TMP/checksums.txt.pem" \
+        --signature "$TMP/checksums.txt.sig" \
+        --certificate-identity "$IDENTITY" \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        "$TMP/checksums.txt" >/dev/null \
+        || fail "Release signature verification failed; nothing installed"
+    printf 'Verified checksums.txt with Sigstore/cosign\n'
+else
+    printf '%s\n' 'Warning: cosign not found; verifying checksum only, not release provenance.' >&2
+fi
 EXPECTED=$(awk -v name="$ASSET" '$2 == name { count++; sum=$1 } END { if (count != 1) exit 1; print sum }' "$TMP/checksums.txt") || fail "Missing or duplicate archive checksum"
 printf '%s\n' "$EXPECTED" | grep -Eq '^[0-9a-f]{64}$' || fail "Invalid archive checksum"
 ACTUAL=$(sha256sum "$TMP/$ASSET" | awk '{print $1}')

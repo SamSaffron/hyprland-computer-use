@@ -1,6 +1,6 @@
 module github.com/samsaffron/hyprland-computer-use
 
-go 1.25.0
+go 1.26.6
 
 require (
 	github.com/godbus/dbus/v5 v5.2.2

@@ -420,7 +420,10 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (map[str
 	if grant != nil {
 		token = grant.ID
 	} else {
-		token = randomID()
+		token, e = randomID()
+		if e != nil {
+			return nil, e
+		}
 		e = b.backend.guard(ctx, map[string]any{"op": "authorize", "token": token, "window": w.ID, "milliseconds": 300000})
 		if e != nil {
 			return nil, e
@@ -525,13 +528,17 @@ type Recording struct {
 	cancel context.CancelFunc
 }
 
-func (b *Broker) record(client string, w Window) (any, error) {
+func (b *Broker) record(parent context.Context, client string, w Window) (any, error) {
 	_, rid, e := b.permit(client, "record", Scope{"window", w.ID}, &w, "Record only this window to a local video")
 	if e != nil {
 		return nil, e
 	}
 	if rid != "" {
 		return map[string]any{"status": "approval_required", "request_id": rid}, nil
+	}
+	id, e := randomID()
+	if e != nil {
+		return nil, e
 	}
 	b.mu.Lock()
 	if len(b.recordings) >= 32 {
@@ -548,80 +555,117 @@ func (b *Broker) record(client string, w Window) (any, error) {
 		b.mu.Unlock()
 		return nil, errors.New("maximum two recordings")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	id := randomID()
+	ctx, cancel := context.WithTimeout(parent, 10*time.Minute)
 	r := &Recording{Info: RecordingInfo{ID: id, Client: client, Window: w.ID, Status: "recording", Started: b.now()}, cancel: cancel}
 	b.recordings[id] = r
 	b.mu.Unlock()
 	go func() {
-		path := filepath.Join(b.backend.Data, id+".mp4")
-		cmd := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-use_wallclock_as_timestamps", "1", "-f", "image2pipe", "-framerate", "5", "-i", "-", "-fps_mode", "vfr", "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-movflags", "+faststart", path)
-		pipe, e := cmd.StdinPipe()
-		var log bytes.Buffer
-		cmd.Stderr = &log
-		if e == nil {
-			e = cmd.Start()
-		}
-		if e == nil {
-			ticker := time.NewTicker(200 * time.Millisecond)
-			for {
+		finalPath := filepath.Join(b.backend.Data, id+".mp4")
+		tmp, err := os.CreateTemp(b.backend.Data, ".recording-"+id+"-*.mp4")
+		if err != nil {
+			e = err
+		} else {
+			tmpPath := tmp.Name()
+			_ = tmp.Close()
+			defer os.Remove(tmpPath)
+			cmd := exec.CommandContext(parent, "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-use_wallclock_as_timestamps", "1", "-f", "image2pipe", "-framerate", "5", "-i", "-", "-fps_mode", "vfr", "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-movflags", "+faststart", tmpPath)
+			pipe, pipeErr := cmd.StdinPipe()
+			var log bytes.Buffer
+			cmd.Stderr = &log
+			if pipeErr == nil {
+				pipeErr = cmd.Start()
+			}
+			if pipeErr != nil {
+				e = pipeErr
+			} else {
+				ticker := time.NewTicker(200 * time.Millisecond)
+				for {
+					select {
+					case <-ctx.Done():
+						goto done
+					case <-ticker.C:
+						cur, windowErr := b.backend.window(ctx, w.ID)
+						if windowErr != nil {
+							if ctx.Err() == nil {
+								e = windowErr
+							}
+							goto done
+						}
+						if cur.Size != w.Size {
+							e = errors.New("recording stopped: window resized")
+							goto done
+						}
+						b.mu.Lock()
+						_, ok := b.allowedLocked(client, "record", Scope{"window", w.ID}, &cur)
+						b.mu.Unlock()
+						if !ok {
+							goto done
+						}
+						frame, captureErr := b.backend.capture(ctx, cur, 1280)
+						if captureErr != nil {
+							if ctx.Err() == nil {
+								e = captureErr
+							}
+							goto done
+						}
+						b.mu.Lock()
+						_, stillAllowed := b.allowedLocked(client, "record", Scope{"window", w.ID}, &cur)
+						b.mu.Unlock()
+						if !stillAllowed {
+							goto done
+						}
+						written := make(chan error, 1)
+						go func() { _, writeErr := pipe.Write(frame); written <- writeErr }()
+						select {
+						case writeErr := <-written:
+							if writeErr != nil {
+								e = writeErr
+								goto done
+							}
+						case <-ctx.Done():
+							_ = pipe.Close()
+							<-written
+							goto done
+						}
+						b.mu.Lock()
+						r.Info.Frames++
+						b.mu.Unlock()
+					}
+				}
+			done:
+				ticker.Stop()
+				_ = pipe.Close()
+				wait := make(chan error, 1)
+				go func() { wait <- cmd.Wait() }()
 				select {
-				case <-ctx.Done():
-					goto done
-				case <-ticker.C:
-					cur, we := b.backend.window(ctx, w.ID)
-					if we != nil {
-						if ctx.Err() == nil {
-							e = we
-						}
-						goto done
+				case waitErr := <-wait:
+					if e == nil {
+						e = waitErr
 					}
-					if cur.Size != w.Size {
-						e = errors.New("recording stopped: window resized")
-						goto done
-					}
-					b.mu.Lock()
-					_, ok := b.allowedLocked(client, "record", Scope{"window", w.ID}, &cur)
-					b.mu.Unlock()
-					if !ok {
-						goto done
-					}
-					var frame []byte
-					frame, e = b.backend.capture(ctx, cur, 1280)
-					if e != nil {
-						if ctx.Err() != nil {
-							e = nil
-						}
-						goto done
-					}
-					b.mu.Lock()
-					_, stillAllowed := b.allowedLocked(client, "record", Scope{"window", w.ID}, &cur)
-					b.mu.Unlock()
-					if !stillAllowed {
-						goto done
-					}
-					if _, e = pipe.Write(frame); e != nil {
-						goto done
-					}
-					b.mu.Lock()
-					r.Info.Frames++
-					b.mu.Unlock()
+				case <-time.After(5 * time.Second):
+					_ = cmd.Process.Kill()
+					<-wait
+					e = errors.New("recorder finalize timeout")
 				}
 			}
-		done:
-			ticker.Stop()
-			_ = pipe.Close()
-			wait := make(chan error, 1)
-			go func() { wait <- cmd.Wait() }()
-			select {
-			case we := <-wait:
-				if e == nil {
-					e = we
+			b.mu.Lock()
+			frames := r.Info.Frames
+			b.mu.Unlock()
+			if e == nil && frames == 0 {
+				e = errors.New("recording produced no frames")
+			}
+			if e == nil {
+				info, statErr := os.Stat(tmpPath)
+				if statErr != nil || info.Size() == 0 {
+					e = errors.New("recorder produced no video")
+				} else if chmodErr := os.Chmod(tmpPath, 0600); chmodErr != nil {
+					e = chmodErr
+				} else if renameErr := os.Rename(tmpPath, finalPath); renameErr != nil {
+					e = renameErr
 				}
-			case <-time.After(5 * time.Second):
-				_ = cmd.Process.Kill()
-				<-wait
-				e = errors.New("recorder finalize timeout")
+			}
+			if e != nil && log.Len() > 0 {
+				e = fmt.Errorf("%w: %s", e, strings.TrimSpace(log.String()))
 			}
 		}
 		cancel()
@@ -629,11 +673,9 @@ func (b *Broker) record(client string, w Window) (any, error) {
 		defer b.mu.Unlock()
 		r.Info.Status = "stopped"
 		if e != nil {
-			r.Info.Error = e.Error() + ": " + log.String()
-		}
-		if r.Info.Frames > 0 && log.Len() == 0 {
-			r.Info.Path = path
-			_ = os.Chmod(path, 0600)
+			r.Info.Error = e.Error()
+		} else {
+			r.Info.Path = finalPath
 		}
 		b.noteLocked("recording_stopped", id)
 	}()

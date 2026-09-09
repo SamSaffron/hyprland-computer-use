@@ -26,6 +26,8 @@ func TestReleaseInstaller(t *testing.T) {
 		{name: "checksum mismatch", mode: "bad-checksum", fail: true},
 		{name: "missing checksum", mode: "missing-checksum", fail: true},
 		{name: "duplicate checksum", mode: "duplicate-checksum", fail: true},
+		{name: "cosign verification", mode: "cosign"},
+		{name: "bad signature", mode: "bad-signature", fail: true},
 		{name: "failed download", mode: "download-failure", fail: true},
 		{name: "missing binary", mode: "missing-binary", fail: true},
 		{name: "unsupported OS", mode: "unsupported", fail: true},
@@ -79,9 +81,11 @@ func TestReleaseInstaller(t *testing.T) {
 			old := []byte("old executable")
 			dest := filepath.Join(installDir, name)
 			for path, data := range map[string][]byte{
-				filepath.Join(dir, "archive"):   archive.Bytes(),
-				filepath.Join(dir, "checksums"): []byte(manifest),
-				dest:                            old,
+				filepath.Join(dir, "archive"):     archive.Bytes(),
+				filepath.Join(dir, "checksums"):   []byte(manifest),
+				filepath.Join(dir, "signature"):   []byte("fixture signature"),
+				filepath.Join(dir, "certificate"): []byte("fixture certificate"),
+				dest:                              old,
 			} {
 				if err := os.WriteFile(path, data, 0600); err != nil {
 					t.Fatal(err)
@@ -124,9 +128,20 @@ case "$url" in
     cp "$FIXTURE/archive" "$out" ;;
   https://github.com/samsaffron/hyprland-computer-use/releases/download/v0.1.0/checksums.txt)
     cp "$FIXTURE/checksums" "$out" ;;
+  https://github.com/samsaffron/hyprland-computer-use/releases/download/v0.1.0/checksums.txt.sig)
+    cp "$FIXTURE/signature" "$out" ;;
+  https://github.com/samsaffron/hyprland-computer-use/releases/download/v0.1.0/checksums.txt.pem)
+    cp "$FIXTURE/certificate" "$out" ;;
   *) exit 91 ;;
 esac
 `)
+			if tc.mode == "cosign" || tc.mode == "bad-signature" {
+				writeExecutable(t, filepath.Join(tools, "cosign"), `#!/bin/sh
+set -eu
+printf '%s\n' "$*" > "$FIXTURE/cosign-args"
+[ "$TEST_MODE" != bad-signature ]
+`)
+			}
 			script, err := filepath.Abs("../install.sh")
 			if err != nil {
 				t.Fatal(err)
@@ -172,6 +187,12 @@ esac
 				requests, err := os.ReadFile(filepath.Join(dir, "requests"))
 				if err != nil || strings.Contains(string(requests), "/latest") {
 					t.Fatal("explicit version should not resolve latest")
+				}
+			}
+			if tc.mode == "cosign" {
+				args, err := os.ReadFile(filepath.Join(dir, "cosign-args"))
+				if err != nil || !strings.Contains(string(args), "--certificate-identity https://github.com/samsaffron/hyprland-computer-use/.github/workflows/release.yml@refs/tags/v0.1.0") {
+					t.Fatalf("cosign identity not constrained: %q %v", args, err)
 				}
 			}
 			entries, err := os.ReadDir(installDir)

@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Please do **not** open a public issue for a suspected vulnerability. Use [GitHub private vulnerability reporting](https://github.com/samsaffron/hyprland-computer-use/security/advisories/new) to send the affected version, impact, reproduction steps, and any suggested mitigation to the maintainers. If private reporting is unavailable, contact the repository owner privately through the contact method on the [maintainer's GitHub profile](https://github.com/samsaffron) before disclosing details publicly.
+Please do **not** open a public issue for a suspected vulnerability. Use [GitHub private vulnerability reporting](https://github.com/samsaffron/hyprland-computer-use/security/advisories/new) to send the affected version, impact, reproduction steps, and any suggested mitigation to the maintainers. If private reporting is unavailable, email [sam.saffron@gmail.com](mailto:sam.saffron@gmail.com) before disclosing details publicly. The same explicit contacts and policy URL are published in [`security.txt`](security.txt).
 
 Reports should avoid real desktop contents, access tokens, private keys, and other sensitive artifacts. No bounty or fixed acknowledgement/remediation timeline is currently promised.
 
@@ -62,4 +62,4 @@ For testing, a separate local harness may simulate human approval. That authorit
 
 Built-in OAuth is opt-in and authenticates HTTP MCP connections only. There is no remote approval endpoint, no token passthrough and no MCP tool that changes OAuth decisions. Local OAuth revocation also terminates that authorization grant's MCP sessions and desktop grants/recordings. Cookie-bound authorization continuation, exact redirect checks, S256 PKCE, resource validation, token-family refresh rotation/replay revocation, expiry and session ownership are covered by tests. Registered client names are untrusted labels; the UI displays callback addresses and the loopback impersonation caveat.
 
-Client registrations persist privately with hashed secrets; tokens/consent are volatile. The provider does not fetch arbitrary client metadata URLs (CIMD is unsupported). Connection/registration/request limits are not a substitute for a hostile-network audit or deployment-level rate limiting. No public-internet deployment was made for the lab test.
+Client registrations persist privately with hashed secrets; the existing registry is loaded only when it is an owner-only regular file and every entry revalidates. Tokens/consent are volatile. The provider does not fetch arbitrary client metadata URLs (CIMD is unsupported). Bounded per-source-IP endpoint limits use the direct TCP peer address and deliberately ignore forwarding headers; deployments behind a reverse proxy therefore share one budget unless the proxy applies its own stricter limits. These controls and object caps are not a substitute for a hostile-network audit. No public-internet deployment was made for the lab test.

@@ -8,12 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -76,6 +78,8 @@ type Broker struct {
 	oauth           *OAuthProvider
 	picker          *SharePicker
 	mu              sync.Mutex
+	backendMu       sync.Mutex
+	authority       uint64
 	lastInputWindow string
 	lastInputUntil  time.Time
 	inputMu         sync.Mutex
@@ -93,12 +97,14 @@ type Broker struct {
 	log             *os.File
 }
 
-func randomID() string {
+var randomReader io.Reader = rand.Reader
+
+func randomID() (string, error) {
 	var b [16]byte
-	if _, e := rand.Read(b[:]); e != nil {
-		panic(e)
+	if _, err := io.ReadFull(randomReader, b[:]); err != nil {
+		return "", fmt.Errorf("secure random ID: %w", err)
 	}
-	return hex.EncodeToString(b[:])
+	return hex.EncodeToString(b[:]), nil
 }
 func newBroker(d *Desktop) *Broker {
 	return &Broker{mode: "approve", clients: map[string]string{}, requests: map[string]*Request{}, grants: map[string]*Grant{}, backend: d, recordings: map[string]*Recording{}, now: time.Now}
@@ -200,7 +206,10 @@ func (b *Broker) permit(client, cap string, s Scope, w *Window, reason string) (
 			label += " · WARNING: terminal control is shell authority"
 		}
 	}
-	id := randomID()
+	id, err := randomID()
+	if err != nil {
+		return nil, "", err
+	}
 	b.requests[id] = &Request{id, client, cap, s, label, reason, "pending", b.now()}
 	b.open++
 	b.noteLocked("requested", label)
@@ -208,57 +217,108 @@ func (b *Broker) permit(client, cap string, s Scope, w *Window, reason string) (
 }
 func (b *Broker) decide(id string, seconds int, approve bool) error {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	r := b.requests[id]
 	if r == nil || r.State != "pending" {
+		b.mu.Unlock()
 		return errors.New("request is no longer pending")
 	}
 	if !approve {
 		r.State = "denied"
 		b.noteLocked("denied", r.Label)
+		b.mu.Unlock()
 		return nil
 	}
 	if b.paused || b.uiCount == 0 || b.mode != "approve" {
+		b.mu.Unlock()
 		return errors.New("cannot grant in current state")
 	}
 	if seconds < 1 || seconds > 3600 {
+		b.mu.Unlock()
 		return errors.New("duration must be 1–3600 seconds")
 	}
-	if r.Capability == "control" || r.Scope.Kind == "window" {
-		if _, e := b.backend.window(context.Background(), r.Scope.ID); e != nil {
+	request := *r
+	authority := b.authority
+	expires := b.now().Add(time.Duration(seconds) * time.Second)
+	b.mu.Unlock()
+
+	grantID, err := randomID()
+	if err != nil {
+		return err
+	}
+	g := &Grant{ID: grantID, Client: request.Client, Capability: request.Capability, Scope: request.Scope, Label: request.Label, Expires: expires}
+	b.backendMu.Lock()
+	defer b.backendMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if request.Capability == "control" || request.Scope.Kind == "window" {
+		if b.backend == nil {
+			return errors.New("target window unavailable")
+		}
+		if _, err = b.backend.window(ctx, request.Scope.ID); err != nil {
 			return errors.New("target window closed")
 		}
 	}
-	g := &Grant{ID: randomID(), Client: r.Client, Capability: r.Capability, Scope: r.Scope, Label: r.Label, Expires: b.now().Add(time.Duration(seconds) * time.Second)}
-	if r.Capability == "control" {
-		if e := b.backend.guard(context.Background(), map[string]any{"op": "authorize", "token": g.ID, "window": g.Scope.ID, "milliseconds": seconds * 1000}); e != nil {
-			return e
+	authorized := false
+	if request.Capability == "control" {
+		if err = b.backend.guard(ctx, map[string]any{"op": "authorize", "token": g.ID, "window": g.Scope.ID, "milliseconds": seconds * 1000}); err != nil {
+			return err
 		}
+		authorized = true
 	}
-	b.grants[g.ID] = g
-	r.State = "granted"
-	b.noteLocked("granted", fmt.Sprintf("%s for %ds", r.Label, seconds))
+
+	b.mu.Lock()
+	current := b.requests[id]
+	stillCurrent := current == r && current.State == "pending" && b.authority == authority && !b.paused && b.uiCount > 0 && b.mode == "approve" && b.now().Before(expires)
+	if stillCurrent {
+		b.grants[g.ID] = g
+		current.State = "granted"
+		b.noteLocked("granted", fmt.Sprintf("%s for %ds", current.Label, seconds))
+	}
+	b.mu.Unlock()
+	if !stillCurrent {
+		if authorized {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = b.backend.guard(cleanupCtx, map[string]any{"op": "revoke", "token": g.ID})
+			cleanupCancel()
+		}
+		return errors.New("request changed while grant was being authorized")
+	}
 	return nil
 }
-func (b *Broker) revokeLocked(id string) {
+
+// revokeLocked changes broker authority only. Compositor calls must be made after
+// releasing b.mu so a stalled plugin cannot extend unrelated grants.
+func (b *Broker) revokeLocked(id string) *Grant {
 	g := b.grants[id]
 	if g == nil {
-		return
+		return nil
 	}
 	delete(b.grants, id)
-	if g.Capability == "control" && b.backend != nil {
-		_ = b.backend.guard(context.Background(), map[string]any{"op": "revoke", "token": id})
-	}
+	b.authority++
 	b.noteLocked("revoked", g.Label)
+	return g
 }
-func (b *Broker) clearLocked() {
+func (b *Broker) revoke(id string) {
+	b.mu.Lock()
+	g := b.revokeLocked(id)
+	b.mu.Unlock()
+	if g != nil && g.Capability == "control" && b.backend != nil {
+		b.backendMu.Lock()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = b.backend.guard(ctx, map[string]any{"op": "revoke", "token": id})
+		cancel()
+		b.backendMu.Unlock()
+	}
+}
+func (b *Broker) clearLocked() bool {
 	b.picker = nil
-	for id := range b.grants {
-		b.revokeLocked(id)
+	hadControl := false
+	for id, g := range b.grants {
+		hadControl = hadControl || g.Capability == "control"
+		delete(b.grants, id)
+		b.noteLocked("revoked", g.Label)
 	}
-	if b.backend != nil {
-		_ = b.backend.guard(context.Background(), map[string]any{"op": "clear"})
-	}
+	b.authority++
 	for _, r := range b.requests {
 		if r.State == "pending" {
 			r.State = "cancelled"
@@ -267,12 +327,31 @@ func (b *Broker) clearLocked() {
 	for _, r := range b.recordings {
 		r.cancel()
 	}
+	return hadControl
+}
+func (b *Broker) clearBackend() {
+	if b.backend != nil {
+		b.backendMu.Lock()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = b.backend.guard(ctx, map[string]any{"op": "clear"})
+		cancel()
+		b.backendMu.Unlock()
+	}
+}
+func (b *Broker) clear() {
+	b.mu.Lock()
+	b.clearLocked()
+	b.mu.Unlock()
+	b.clearBackend()
 }
 func (b *Broker) disconnect(client string) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	controlTokens := []string{}
 	for id, g := range b.grants {
 		if g.Client == client {
+			if g.Capability == "control" {
+				controlTokens = append(controlTokens, id)
+			}
 			b.revokeLocked(id)
 		}
 	}
@@ -289,8 +368,22 @@ func (b *Broker) disconnect(client string) {
 	delete(b.clients, client)
 	if b.picker != nil && b.picker.Client == client {
 		b.picker = nil
+		b.authority++
 	}
 	b.noteLocked("client_disconnected", client)
+	b.mu.Unlock()
+	if b.backend != nil && len(controlTokens) > 0 {
+		b.backendMu.Lock()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		for _, token := range controlTokens {
+			if ctx.Err() != nil {
+				break
+			}
+			_ = b.backend.guard(ctx, map[string]any{"op": "revoke", "token": token})
+		}
+		cancel()
+		b.backendMu.Unlock()
+	}
 }
 func (b *Broker) state(err string) UIState {
 	b.mu.Lock()
@@ -382,12 +475,15 @@ func (b *Broker) maintenance(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			controlExpired := false
 			b.mu.Lock()
 			if b.picker != nil && !b.now().Before(b.picker.Expires) {
 				b.picker = nil
+				b.authority++
 			}
 			for id, g := range b.grants {
 				if !b.now().Before(g.Expires) {
+					controlExpired = controlExpired || g.Capability == "control"
 					b.revokeLocked(id)
 				}
 			}
@@ -397,6 +493,11 @@ func (b *Broker) maintenance(ctx context.Context) {
 				}
 			}
 			b.mu.Unlock()
+			if controlExpired {
+				// Local authority is already gone. A bounded clear also removes any
+				// compositor lease whose individual revoke reply was lost.
+				b.clearBackend()
+			}
 		}
 	}
 }
@@ -406,14 +507,19 @@ func (b *Broker) handleUI(conn net.Conn) {
 	b.uiCount++
 	b.mu.Unlock()
 	defer func() {
+		clearBackend := false
 		b.mu.Lock()
 		b.uiCount--
 		if b.uiCount == 0 {
 			b.paused = true
 			b.clearLocked()
+			clearBackend = true
 			b.noteLocked("supervisor_disconnected", "all activity stopped")
 		}
 		b.mu.Unlock()
+		if clearBackend {
+			b.clearBackend()
+		}
 	}()
 	scan := bufio.NewScanner(conn)
 	scan.Buffer(make([]byte, 4096), 16384)
@@ -463,21 +569,22 @@ func (b *Broker) handleUI(conn net.Conn) {
 			case "deny":
 				e = b.decide(q.ID, 0, false)
 			case "revoke":
-				b.mu.Lock()
-				b.revokeLocked(q.ID)
-				b.mu.Unlock()
+				b.revoke(q.ID)
 			case "revoke_all":
-				b.mu.Lock()
-				b.clearLocked()
-				b.mu.Unlock()
+				b.clear()
 			case "pause":
 				b.mu.Lock()
 				b.paused = q.Paused
 				if b.paused {
 					b.clearLocked()
+				} else {
+					b.authority++
 				}
 				b.noteLocked("pause", fmt.Sprint(q.Paused))
 				b.mu.Unlock()
+				if q.Paused {
+					b.clearBackend()
+				}
 			case "mode":
 				if q.Mode != "approve" && q.Mode != "yolo" {
 					e = errors.New("invalid mode")
@@ -487,6 +594,7 @@ func (b *Broker) handleUI(conn net.Conn) {
 					b.mode = q.Mode
 					b.noteLocked("mode", q.Mode)
 					b.mu.Unlock()
+					b.clearBackend()
 				}
 			default:
 				e = errors.New("unknown UI command")
@@ -502,28 +610,67 @@ func (b *Broker) handleUI(conn net.Conn) {
 		}
 	}
 }
+
+type lockedUnixListener struct {
+	net.Listener
+	lock *os.File
+}
+
+func (l *lockedUnixListener) Close() error {
+	err := l.Listener.Close()
+	_ = syscall.Flock(int(l.lock.Fd()), syscall.LOCK_UN)
+	lockErr := l.lock.Close()
+	if err == nil {
+		err = lockErr
+	}
+	return err
+}
+
 func listenUnix(path string) (net.Listener, error) {
 	if len(path) > 100 {
 		return nil, errors.New("Unix socket path too long")
 	}
-	if info, e := os.Lstat(path); e == nil {
+	lockPath := path + ".lock"
+	fd, err := syscall.Open(lockPath, syscall.O_CREAT|syscall.O_RDWR|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("open socket lock: %w", err)
+	}
+	lock := os.NewFile(uintptr(fd), lockPath)
+	if err = syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		lock.Close()
+		return nil, fmt.Errorf("already listening: %s", path)
+	}
+	fail := func(e error) (net.Listener, error) {
+		_ = syscall.Flock(fd, syscall.LOCK_UN)
+		_ = lock.Close()
+		return nil, e
+	}
+	if info, statErr := os.Lstat(path); statErr == nil {
 		if info.Mode()&os.ModeSocket == 0 {
-			return nil, fmt.Errorf("refusing to replace non-socket: %s", path)
+			return fail(fmt.Errorf("refusing to replace non-socket: %s", path))
 		}
-		c, e := net.DialTimeout("unix", path, 200*time.Millisecond)
-		if e == nil {
-			c.Close()
-			return nil, fmt.Errorf("already listening: %s", path)
+		// Holding the adjacent flock proves no cooperating live broker owns
+		// this pathname; only then is stale-socket removal allowed.
+		if err = os.Remove(path); err != nil {
+			return fail(err)
 		}
-		if e = os.Remove(path); e != nil {
-			return nil, e
-		}
+	} else if !os.IsNotExist(statErr) {
+		return fail(statErr)
 	}
-	l, e := net.Listen("unix", path)
-	if e == nil {
-		e = os.Chmod(path, 0600)
+	addr, err := net.ResolveUnixAddr("unix", path)
+	if err != nil {
+		return fail(err)
 	}
-	return l, e
+	listener, err := net.ListenUnix("unix", addr)
+	if err != nil {
+		return fail(err)
+	}
+	listener.SetUnlinkOnClose(true)
+	if err = os.Chmod(path, 0600); err != nil {
+		_ = listener.Close()
+		return fail(err)
+	}
+	return &lockedUnixListener{Listener: listener, lock: lock}, nil
 }
 func runtimeDir() (string, error) {
 	r := os.Getenv("XDG_RUNTIME_DIR")

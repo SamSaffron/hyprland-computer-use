@@ -90,7 +90,10 @@ func (f *oauthFixture) register(t *testing.T, method string) map[string]any {
 }
 func (f *oauthFixture) authorization(t *testing.T, c map[string]any) (string, url.Values) {
 	t.Helper()
-	verifier := secret()
+	verifier, err := secret()
+	if err != nil {
+		t.Fatal(err)
+	}
 	h := sha256.Sum256([]byte(verifier))
 	q := url.Values{"response_type": {"code"}, "client_id": {c["client_id"].(string)}, "redirect_uri": {"http://127.0.0.1:45678/callback"}, "resource": {f.s.URL + "/mcp"}, "scope": {connectScope}, "state": {"state-to-preserve"}, "code_challenge_method": {"S256"}, "code_challenge": {base64.RawURLEncoding.EncodeToString(h[:])}}
 	status, _, body := f.request(t, "GET", "/authorize?"+q.Encode(), nil, nil)

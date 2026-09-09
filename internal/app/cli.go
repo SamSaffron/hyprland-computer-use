@@ -208,13 +208,11 @@ func run() error {
 			return e
 		}
 		defer ui.Close()
-		defer os.Remove(filepath.Join(dir, "ui.sock"))
 		mcp, e := listenUnix(filepath.Join(dir, "mcp.sock"))
 		if e != nil {
 			return e
 		}
 		defer mcp.Close()
-		defer os.Remove(filepath.Join(dir, "mcp.sock"))
 		if e = d.guard(ctx, map[string]any{"op": "clear"}); e != nil {
 			return e
 		}
@@ -224,7 +222,7 @@ func run() error {
 			return e
 		}
 		defer b.log.Close()
-		defer func() { b.mu.Lock(); b.clearLocked(); b.mu.Unlock() }()
+		defer b.clear()
 		if *httpAddr != "" {
 			server, err := startHTTP(ctx, b, *httpAddr, *publicURL, *oauth, *cert, *key, *data)
 			if err != nil {

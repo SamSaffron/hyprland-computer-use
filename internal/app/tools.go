@@ -18,15 +18,19 @@ func tool[In any](s *mcp.Server, name, description string, f func(context.Contex
 	})
 }
 func (b *Broker) serveMCP(ctx context.Context, c net.Conn) {
-	id := randomID()
+	id, err := randomID()
+	if err != nil {
+		_ = c.Close()
+		return
+	}
 	b.mu.Lock()
 	b.clients[id] = "MCP " + id[:8]
 	b.mu.Unlock()
 	defer b.disconnect(id)
-	s := b.newMCPServer(id, nil)
+	s := b.newMCPServer(ctx, id, nil)
 	_ = s.Run(ctx, &mcp.IOTransport{Reader: c, Writer: c})
 }
-func (b *Broker) newMCPServer(id string, opts *mcp.ServerOptions) *mcp.Server {
+func (b *Broker) newMCPServer(clientCtx context.Context, id string, opts *mcp.ServerOptions) *mcp.Server {
 	if opts == nil {
 		opts = &mcp.ServerOptions{}
 	}
@@ -160,7 +164,7 @@ func (b *Broker) newMCPServer(id string, opts *mcp.ServerOptions) *mcp.Server {
 		if e != nil {
 			return nil, e
 		}
-		return b.record(id, w)
+		return b.record(clientCtx, id, w)
 	})
 	tool(s, "stop_recording", "Stop one recording belonging to this MCP connection.", func(ctx context.Context, a struct {
 		ID string `json:"recording_id"`
@@ -207,7 +211,10 @@ func (b *Broker) newMCPServer(id string, opts *mcp.ServerOptions) *mcp.Server {
 		if r != "" {
 			return map[string]any{"status": "approval_required", "request_id": r}, nil
 		}
-		cmd := exec.Command(a.Application, args...)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		cmd := exec.CommandContext(clientCtx, a.Application, args...)
 		if e = cmd.Start(); e != nil {
 			return nil, e
 		}

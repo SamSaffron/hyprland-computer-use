@@ -41,7 +41,7 @@ func TestIndependentSeatStatusDoesNotGrantAuthority(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		st, ct := mcp.NewInMemoryTransports()
-		server, err := b.newMCPServer("a", nil).Connect(ctx, st, nil)
+		server, err := b.newMCPServer(ctx, "a", nil).Connect(ctx, st, nil)
 		if err != nil {
 			cancel()
 			t.Fatal(err)

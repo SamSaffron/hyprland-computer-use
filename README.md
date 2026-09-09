@@ -2,6 +2,8 @@
 
 Let an MCP agent view and control **windows you approve**, with a local Quickshell permission console and tray icon. Access starts denied; you choose the windows and duration, and can pause or revoke it.
 
+![Permission console beside a window with its green control-grant outline](docs/console-preview.svg)
+
 > **Threat model:** MCP clients are untrusted, but the compositor plugin, broker, local permission UI, and other processes running as your desktop user are trusted. Sharing a terminal transitively grants shell authority. This is scoped computer-use plumbing, **not an OS sandbox**; read [SECURITY.md](SECURITY.md) before exposing it to an agent.
 
 Tested against Hyprland **0.56.2** (commit `efb50993780079460b0cbed1363e2166a2de1d9f`); the plugin requires headers matching your exact running build. Input supports native Wayland windows, not XWayland, and prefers a separate input seat with guarded focus borrowing for clients such as Kitty. Application coverage is limited; use disposable windows first. Seat-owning plugin updates require a Hyprland restart.
@@ -17,20 +19,25 @@ sudo pacman -S --needed curl make gcc pkgconf hyprland nlohmann-json \
   wayland libxkbcommon libei quickshell grim ffmpeg
 ```
 
-**Arch Linux is currently the only tested distribution.** Other distributions may work if they provide the equivalent development packages, but are not part of the support claim. Source builds require **Go 1.25 or newer**; release binaries do not require Go.
+**Arch Linux is currently the only tested distribution.** Other distributions may work if they provide the equivalent development packages, but are not part of the support claim. Source builds require **Go 1.26.6 or newer**; release binaries do not require Go.
 
-Install a release binary—no Go compiler needed. For a security-sensitive install, download and inspect `install.sh` instead of piping it directly to a shell; the installer checks the archive against the release's SHA-256 manifest, which is not an independent signature (see [Releasing](docs/RELEASING.md#installer-behavior)).
+Install a release binary—no Go compiler needed. Download and inspect the installer first. It verifies the release's keyless Sigstore signature when `cosign` is installed, warns before falling back to checksum-only verification, and always checks the selected archive's SHA-256 digest (see [Releasing](docs/RELEASING.md#installer-behavior)).
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/samsaffron/hyprland-computer-use/main/install.sh | sh
+curl -fsSLO https://raw.githubusercontent.com/samsaffron/hyprland-computer-use/main/install.sh
+less install.sh
+sh install.sh
+# Or choose an exact release:
+sh install.sh --version v0.1.0
 export PATH="$HOME/.local/bin:$PATH"
+hyprland-computer-use version
 ```
 
 Only the **executable** needs to be copied to another desktop; native sources and the UI are bundled. The target still needs the system dependencies above.
 
 ### 2. Start it inside your Hyprland session
 
-Run as your normal desktop user, **not root**:
+Run as your normal desktop user, **not root**. Setup compiles the compositor plugin against your running Hyprland headers and refuses a version mismatch instead of loading an incompatible plugin.
 
 ```sh
 hyprland-computer-use setup
@@ -59,6 +66,19 @@ The client must run as the same desktop user with the same `XDG_RUNTIME_DIR`. Th
 ### 4. Approve a window
 
 Ask the agent to list windows and request access. Approve in the local console, or click **Share** to pick a window yourself. If the console says **PAUSED**, click **Resume**. Use **Pause** or revoke the grant to stop access; closing the last console also pauses and clears grants.
+
+## Other distributions / source build
+
+Arch Linux is the tested target. On other distributions, install equivalent packages before running `setup`; package names and availability vary:
+
+| Purpose | Debian/Ubuntu family | Fedora family |
+|---|---|---|
+| Compiler/build tools | `build-essential`, `pkg-config` | `gcc-c++`, `make`, `pkgconf-pkg-config` |
+| Hyprland private headers | a version-matched `hyprland-dev` package or source tree | a version-matched `hyprland-devel` package or source tree |
+| Native libraries | `libwayland-dev`, `libxkbcommon-dev`, `libei-dev`, `nlohmann-json3-dev` | `wayland-devel`, `libxkbcommon-devel`, `libei-devel`, `json-devel`/`nlohmann-json-devel` |
+| UI/capture/recording | Quickshell, `grim`, `ffmpeg` | Quickshell, `grim`, `ffmpeg` |
+
+Some stable distributions do not package a recent Quickshell, libei, or matching Hyprland development headers. Do not mix headers from a different Hyprland build. For a source build, install **Go 1.26.6+**, clone this repository, run `make build/hyprland-computer-use`, and then run the built executable's `setup --build-only` before making compositor changes. See [Development](docs/DEVELOPMENT.md) and [Setup](docs/SETUP.md).
 
 ## Update or stop
 
@@ -102,4 +122,4 @@ See [Testing status](docs/TESTING.md) for the evidence behind these claims and [
 | [Testing status](docs/TESTING.md) | Exact lab versions, verified and unverified behavior |
 | [Security](SECURITY.md) | Trust boundaries and guarantees |
 
-[MIT license](LICENSE) · [Contributing](CONTRIBUTING.md) · [Third-party notices](THIRD_PARTY.md)
+[MIT license](LICENSE) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Third-party notices](THIRD_PARTY.md)

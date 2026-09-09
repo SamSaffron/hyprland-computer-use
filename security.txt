@@ -1,0 +1,7 @@
+Contact: https://github.com/samsaffron/hyprland-computer-use/security/advisories/new
+Contact: mailto:sam.saffron@gmail.com
+Contact: https://github.com/samsaffron
+Policy: https://github.com/samsaffron/hyprland-computer-use/blob/main/SECURITY.md
+Canonical: https://raw.githubusercontent.com/samsaffron/hyprland-computer-use/main/security.txt
+Preferred-Languages: en
+Expires: 2027-09-10T00:00:00Z

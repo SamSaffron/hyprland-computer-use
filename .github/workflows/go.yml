@@ -18,6 +18,15 @@ jobs:
           cache: true
       - name: Formatting, vet, native transaction tests, and Go race tests
         run: make test
+      - name: Static analysis
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.6.1 -checks=all,-ST1000,-ST1005,-ST1013,-ST1021 ./...
+      - name: Go vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+      - name: Required native Wayland wire test
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev
+          make native-text-wire-test
       - name: Build the standalone Go executable
         run: make build/hyprland-computer-use
       - name: Validate release packaging without publishing
@@ -25,7 +34,7 @@ jobs:
         with:
           distribution: goreleaser
           version: '~> v2'
-          args: release --snapshot --clean --skip=publish
+          args: release --snapshot --clean --skip=publish,sign
 
   native:
     name: Native build (Hyprland 0.56.2)

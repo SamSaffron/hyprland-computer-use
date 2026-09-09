@@ -47,7 +47,18 @@ func (p *OAuthProvider) refreshToken(w http.ResponseWriter, r *http.Request, c O
 		oauthError(w, 429, "temporarily_unavailable", "token limit reached")
 		return
 	}
-	access, refresh := secret(), secret()
+	access, err := secret()
+	if err != nil {
+		p.mu.Unlock()
+		oauthError(w, 500, "server_error", "cannot generate token credentials")
+		return
+	}
+	refresh, err := secret()
+	if err != nil {
+		p.mu.Unlock()
+		oauthError(w, 500, "server_error", "cannot generate token credentials")
+		return
+	}
 	rt.Used = true
 	p.refresh[key] = rt
 	p.refresh[digest(refresh)] = oauthRefresh{Connection: rt.Connection}

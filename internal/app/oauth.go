@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -11,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
@@ -75,14 +76,20 @@ type OAuthProvider struct {
 	now                           func() time.Time
 	notify                        func()
 	revoke                        func(string)
+	rate                          map[string]rateEntry
 }
 
-func secret() string {
+type rateEntry struct {
+	window time.Time
+	count  int
+}
+
+func secret() (string, error) {
 	var b [32]byte
-	if _, e := rand.Read(b[:]); e != nil {
-		panic(e)
+	if _, err := io.ReadFull(randomReader, b[:]); err != nil {
+		return "", fmt.Errorf("secure random secret: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(b[:])
+	return base64.RawURLEncoding.EncodeToString(b[:]), nil
 }
 func digest(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
 func newOAuthProvider(issuer, data string) (*OAuthProvider, error) {
@@ -91,19 +98,86 @@ func newOAuthProvider(issuer, data string) (*OAuthProvider, error) {
 		return nil, errors.New("OAuth requires an HTTPS public URL with no path, query or credentials")
 	}
 	issuer = strings.TrimRight(issuer, "/")
-	p := &OAuthProvider{issuer: issuer, resource: issuer + "/mcp", clientsFile: filepath.Join(data, "oauth-clients.json"), refresh: map[string]oauthRefresh{}, clients: map[string]OAuthClient{}, pending: map[string]*OAuthPending{}, codes: map[string]oauthCode{}, tokens: map[string]OAuthConnection{}, now: time.Now}
-	raw, e := os.ReadFile(p.clientsFile)
-	if e == nil {
-		if e = json.Unmarshal(raw, &p.clients); e != nil {
-			return nil, fmt.Errorf("OAuth client registry: %w", e)
+	p := &OAuthProvider{issuer: issuer, resource: issuer + "/mcp", clientsFile: filepath.Join(data, "oauth-clients.json"), refresh: map[string]oauthRefresh{}, clients: map[string]OAuthClient{}, pending: map[string]*OAuthPending{}, codes: map[string]oauthCode{}, tokens: map[string]OAuthConnection{}, rate: map[string]rateEntry{}, now: time.Now}
+	fd, openErr := syscall.Open(p.clientsFile, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0)
+	if openErr == nil {
+		f := os.NewFile(uintptr(fd), p.clientsFile)
+		info, statErr := f.Stat()
+		if statErr != nil {
+			f.Close()
+			return nil, statErr
 		}
-		if len(p.clients) > 256 {
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || !ok || stat.Uid != uint32(os.Geteuid()) || info.Size() > 1<<20 {
+			f.Close()
+			return nil, errors.New("OAuth client registry must be a private, owner-only regular file no larger than 1 MiB")
+		}
+		raw, readErr := io.ReadAll(io.LimitReader(f, (1<<20)+1))
+		closeErr := f.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		var clients map[string]OAuthClient
+		if err := json.Unmarshal(raw, &clients); err != nil || clients == nil {
+			if err == nil {
+				err = errors.New("registry must be a JSON object")
+			}
+			return nil, fmt.Errorf("OAuth client registry: %w", err)
+		}
+		if len(clients) > 256 {
 			return nil, errors.New("OAuth client registry exceeds limit")
 		}
-	} else if !os.IsNotExist(e) {
-		return nil, e
+		for id, client := range clients {
+			if id != client.ID || validateOAuthClient(client) != nil {
+				return nil, fmt.Errorf("OAuth client registry contains invalid client %q", id)
+			}
+		}
+		p.clients = clients
+	} else if openErr != syscall.ENOENT {
+		return nil, openErr
 	}
 	return p, nil
+}
+
+func validateOAuthClient(c OAuthClient) error {
+	if len(c.ID) != 32 {
+		return errors.New("invalid client ID")
+	}
+	if _, err := hex.DecodeString(c.ID); err != nil {
+		return errors.New("invalid client ID")
+	}
+	if len(c.Name) == 0 || len(c.Name) > 100 || len(c.Redirects) == 0 || len(c.Redirects) > 10 {
+		return errors.New("invalid client metadata")
+	}
+	for _, redirect := range c.Redirects {
+		if !validRedirect(redirect) {
+			return errors.New("invalid redirect")
+		}
+	}
+	if c.Method != "none" && c.Method != "client_secret_basic" {
+		return errors.New("invalid authentication method")
+	}
+	if len(c.GrantTypes) == 0 || !slices.Contains(c.GrantTypes, "authorization_code") {
+		return errors.New("invalid grant types")
+	}
+	for _, grant := range c.GrantTypes {
+		if grant != "authorization_code" && grant != "refresh_token" {
+			return errors.New("invalid grant type")
+		}
+	}
+	if c.Method == "none" && c.SecretHash != "" {
+		return errors.New("public client has a secret")
+	}
+	if c.Method == "client_secret_basic" {
+		decoded, err := hex.DecodeString(c.SecretHash)
+		if err != nil || len(decoded) != sha256.Size {
+			return errors.New("invalid secret digest")
+		}
+	}
+	return nil
 }
 func (p *OAuthProvider) saveClientsLocked() error {
 	raw, e := json.Marshal(p.clients)
@@ -234,13 +308,22 @@ func (p *OAuthProvider) register(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 400, "invalid_client_metadata", "authorization_code must be supported")
 		return
 	}
-	c := OAuthClient{GrantTypes: q.GrantTypes, ID: randomID(), Name: cleanReason(q.Name), Redirects: q.Redirects, Method: q.Method, Created: p.now().Unix()}
+	clientID, err := randomID()
+	if err != nil {
+		oauthError(w, 500, "server_error", "cannot generate client credentials")
+		return
+	}
+	c := OAuthClient{GrantTypes: q.GrantTypes, ID: clientID, Name: cleanReason(q.Name), Redirects: q.Redirects, Method: q.Method, Created: p.now().Unix()}
 	if c.Name == "" {
 		c.Name = "Unnamed MCP client"
 	}
 	sec := ""
 	if c.Method == "client_secret_basic" {
-		sec = secret()
+		sec, err = secret()
+		if err != nil {
+			oauthError(w, 500, "server_error", "cannot generate client credentials")
+			return
+		}
 		c.SecretHash = digest(sec)
 	}
 	p.mu.Lock()
@@ -324,8 +407,17 @@ func (p *OAuthProvider) authorize(w http.ResponseWriter, r *http.Request) {
 		fail("invalid_request", "PKCE S256 challenge required")
 		return
 	}
-	nonce := secret()
-	pending := &OAuthPending{ID: randomID(), ClientID: c.ID, Name: c.Name, Redirect: q.Get("redirect_uri"), Expires: p.now().Add(5 * time.Minute), State: q.Get("state"), Challenge: challenge, CookieHash: digest(nonce), Decision: "pending"}
+	nonce, e := secret()
+	if e != nil {
+		oauthError(w, 500, "server_error", "cannot generate authorization credentials")
+		return
+	}
+	pendingID, e := randomID()
+	if e != nil {
+		oauthError(w, 500, "server_error", "cannot generate authorization credentials")
+		return
+	}
+	pending := &OAuthPending{ID: pendingID, ClientID: c.ID, Name: c.Name, Redirect: q.Get("redirect_uri"), Expires: p.now().Add(5 * time.Minute), State: q.Get("state"), Challenge: challenge, CookieHash: digest(nonce), Decision: "pending"}
 	p.mu.Lock()
 	if len(p.pending) >= 16 {
 		p.mu.Unlock()
@@ -398,8 +490,12 @@ func (p *OAuthProvider) decide(id string, approve bool) error {
 	if len(p.codes) >= 64 {
 		return errors.New("authorization code limit reached")
 	}
+	code, err := secret()
+	if err != nil {
+		return err
+	}
 	v.Decision = "approved"
-	v.Code = secret()
+	v.Code = code
 	p.codes[digest(v.Code)] = oauthCode{v.ClientID, v.Redirect, v.Challenge, p.resource, p.now().Add(time.Minute)}
 	return nil
 }
@@ -478,13 +574,31 @@ func (p *OAuthProvider) token(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 429, "temporarily_unavailable", "connection token limit reached")
 		return
 	}
-	delete(p.codes, key)
-	raw := secret()
-	v := OAuthConnection{ID: randomID(), ClientID: c.ID, Name: c.Name, Expires: p.now().Add(time.Hour), Resource: p.resource}
-	p.tokens[digest(raw)] = v
+	raw, err := secret()
+	if err != nil {
+		p.mu.Unlock()
+		oauthError(w, 500, "server_error", "cannot generate token credentials")
+		return
+	}
+	connectionID, err := randomID()
+	if err != nil {
+		p.mu.Unlock()
+		oauthError(w, 500, "server_error", "cannot generate token credentials")
+		return
+	}
 	refresh := ""
 	if slices.Contains(c.GrantTypes, "refresh_token") {
-		refresh = secret()
+		refresh, err = secret()
+		if err != nil {
+			p.mu.Unlock()
+			oauthError(w, 500, "server_error", "cannot generate token credentials")
+			return
+		}
+	}
+	delete(p.codes, key)
+	v := OAuthConnection{ID: connectionID, ClientID: c.ID, Name: c.Name, Expires: p.now().Add(time.Hour), Resource: p.resource}
+	p.tokens[digest(raw)] = v
+	if refresh != "" {
 		p.refresh[digest(refresh)] = oauthRefresh{Connection: v}
 	}
 	p.mu.Unlock()
@@ -567,14 +681,58 @@ func (p *OAuthProvider) state() ([]OAuthPending, []OAuthConnection) {
 	slices.SortFunc(connections, func(a, b OAuthConnection) int { return a.Expires.Compare(b.Expires) })
 	return pending, connections
 }
+func requestIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.String()
+	}
+	return "invalid"
+}
+
+func (p *OAuthProvider) rateLimit(name string, limit int, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		now := p.now()
+		key := name + "\x00" + requestIP(r)
+		p.mu.Lock()
+		for candidate, entry := range p.rate {
+			if now.Sub(entry.window) >= time.Minute {
+				delete(p.rate, candidate)
+			}
+		}
+		entry, found := p.rate[key]
+		if !found && len(p.rate) >= 1024 {
+			p.mu.Unlock()
+			w.Header().Set("Retry-After", "60")
+			oauthError(w, http.StatusTooManyRequests, "temporarily_unavailable", "rate limiter capacity reached")
+			return
+		}
+		if !found || now.Sub(entry.window) >= time.Minute {
+			entry = rateEntry{window: now}
+		}
+		entry.count++
+		p.rate[key] = entry
+		allowed := entry.count <= limit
+		p.mu.Unlock()
+		if !allowed {
+			w.Header().Set("Retry-After", "60")
+			oauthError(w, http.StatusTooManyRequests, "temporarily_unavailable", "too many requests")
+			return
+		}
+		next(w, r)
+	}
+}
+
 func (p *OAuthProvider) routes(mux *http.ServeMux) {
 	metadata := auth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{Resource: p.resource, AuthorizationServers: []string{p.issuer}, ScopesSupported: []string{connectScope}, BearerMethodsSupported: []string{"header"}, ResourceName: "Computer Use MCP"})
 	mux.Handle("GET /.well-known/oauth-protected-resource", metadata)
 	mux.Handle("GET /.well-known/oauth-protected-resource/mcp", metadata)
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", p.metadata)
-	mux.HandleFunc("POST /register", p.register)
-	mux.HandleFunc("GET /authorize", p.authorize)
-	mux.HandleFunc("GET /oauth/continue", p.continueAuth)
-	mux.HandleFunc("POST /token", p.token)
-	mux.HandleFunc("POST /revoke", p.revokeToken)
+	mux.HandleFunc("POST /register", p.rateLimit("register", 10, p.register))
+	mux.HandleFunc("GET /authorize", p.rateLimit("authorize", 30, p.authorize))
+	mux.HandleFunc("GET /oauth/continue", p.rateLimit("continue", 180, p.continueAuth))
+	mux.HandleFunc("POST /token", p.rateLimit("token", 30, p.token))
+	mux.HandleFunc("POST /revoke", p.rateLimit("revoke", 30, p.revokeToken))
 }

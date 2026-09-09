@@ -30,12 +30,27 @@ archives:
       - LICENSE
       - THIRD_PARTY.md
       - SECURITY.md
+      - security.txt
       - CONTRIBUTING.md
+      - CHANGELOG.md
       - docs/*.md
+      - docs/*.svg
       - native/*.xml
 
 checksum:
   name_template: checksums.txt
+
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    output: true
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - --yes
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
 
 release:
   github:

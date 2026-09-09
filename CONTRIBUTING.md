@@ -4,7 +4,7 @@ Thank you for helping improve Hyprland Computer Use. Changes should preserve the
 
 ## Development setup
 
-The Go executable requires Go **1.25 or newer**. On Arch Linux, install the full development and test dependencies:
+The Go executable requires Go **1.26.6 or newer**. On Arch Linux, install the full development and test dependencies:
 
 ```sh
 sudo pacman -S --needed go make gcc pkgconf hyprland nlohmann-json \

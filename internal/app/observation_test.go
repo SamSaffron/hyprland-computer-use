@@ -237,7 +237,7 @@ func TestInputWindowSchemaOmitsCaptureWidth(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
-	serverSession, err := newBroker(nil).newMCPServer("a", nil).Connect(ctx, serverTransport, nil)
+	serverSession, err := newBroker(nil).newMCPServer(ctx, "a", nil).Connect(ctx, serverTransport, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestObservationMCPWireContract(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			serverTransport, clientTransport := mcp.NewInMemoryTransports()
-			serverSession, err := b.newMCPServer("a", nil).Connect(ctx, serverTransport, nil)
+			serverSession, err := b.newMCPServer(ctx, "a", nil).Connect(ctx, serverTransport, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -380,7 +380,7 @@ func TestRecordingStopsOnLockedCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, err := b.record("a", w)
+	value, err := b.record(context.Background(), "a", w)
 	if err != nil {
 		t.Fatal(err)
 	}

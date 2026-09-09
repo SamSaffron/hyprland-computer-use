@@ -21,6 +21,12 @@ type httpPeer struct {
 	server        *mcp.Server
 	cancel        context.CancelFunc
 }
+type httpAdmission struct {
+	id       string
+	consumed bool
+}
+type httpAdmissionKey struct{}
+
 type HTTPGateway struct {
 	b       *Broker
 	ctx     context.Context
@@ -41,7 +47,7 @@ func newHTTPGateway(ctx context.Context, b *Broker, origin string, p *OAuthProvi
 	transport := mcp.NewStreamableHTTPHandler(h.newServer, &mcp.StreamableHTTPOptions{JSONResponse: true, SessionTimeout: 5 * time.Minute, MaxRequestBodyBytes: 1 << 20, DisableLocalhostProtection: true})
 	// This wrapper enforces an exact configured Host and Origin, including behind
 	// a TLS reverse proxy. Forwarded headers are never trusted to choose an origin.
-	var endpoint http.Handler = transport
+	var endpoint http.Handler = http.HandlerFunc(h.admitMCP(transport))
 	mux := http.NewServeMux()
 	if p != nil {
 		p.revoke = h.revokePrincipal
@@ -96,9 +102,52 @@ func newHTTPGateway(ctx context.Context, b *Broker, origin string, p *OAuthProvi
 	})
 	return h, nil
 }
+func (h *HTTPGateway) admitMCP(next http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// A missing session header on POST is the only request that can create a
+		// peer. Reserve capacity before the SDK factory so overload has an
+		// explicit HTTP response and concurrent initializations cannot exceed it.
+		if r.Method != http.MethodPost || r.Header.Get("Mcp-Session-Id") != "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		id, err := randomID()
+		if err != nil {
+			http.Error(w, "unable to allocate MCP session", http.StatusInternalServerError)
+			return
+		}
+		h.mu.Lock()
+		if len(h.peers) >= 64 {
+			h.mu.Unlock()
+			w.Header().Set("Retry-After", "5")
+			http.Error(w, "MCP peer capacity reached", http.StatusServiceUnavailable)
+			return
+		}
+		// The reservation occupies the peers map immediately and is replaced by
+		// the real peer synchronously when newServer runs.
+		h.peers[id] = nil
+		h.mu.Unlock()
+		admission := &httpAdmission{id: id}
+		r = r.WithContext(context.WithValue(r.Context(), httpAdmissionKey{}, admission))
+		defer func() {
+			if !admission.consumed {
+				h.mu.Lock()
+				delete(h.peers, id)
+				h.mu.Unlock()
+			}
+		}()
+		next.ServeHTTP(w, r)
+	}
+}
+
 func (h *HTTPGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.handler.ServeHTTP(w, r) }
 func (h *HTTPGateway) newServer(r *http.Request) *mcp.Server {
-	id := randomID()
+	admission, ok := r.Context().Value(httpAdmissionKey{}).(*httpAdmission)
+	if !ok || admission == nil || admission.consumed {
+		return nil
+	}
+	id := admission.id
+	admission.consumed = true
 	principal := ""
 	label := "HTTP MCP " + id[:8]
 	expires := time.Time{}
@@ -110,15 +159,11 @@ func (h *HTTPGateway) newServer(r *http.Request) *mcp.Server {
 		}
 	}
 	h.mu.Lock()
-	if len(h.peers) >= 64 {
-		h.mu.Unlock()
-		return nil
-	}
 	peerCtx, cancel := context.WithCancel(h.ctx)
 	peer := &httpPeer{id: id, principal: principal, cancel: cancel}
 	h.peers[id] = peer
 	ready := make(chan *mcp.ServerSession, 1)
-	peer.server = h.b.newMCPServer(id, &mcp.ServerOptions{GetSessionID: func() string { return id }})
+	peer.server = h.b.newMCPServer(peerCtx, id, &mcp.ServerOptions{GetSessionID: func() string { return id }})
 	// A client's OAuth retry may send a disposable initialize probe. Do not
 	// offer that ghost session as a sharing recipient. Activate when the client begins using MCP (tools/list, status, etc.),
 	// not on an initialize/initialized probe alone.
@@ -174,7 +219,7 @@ func (h *HTTPGateway) revokePrincipal(principal string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, peer := range h.peers {
-		if peer.principal == principal {
+		if peer != nil && peer.principal == principal {
 			peer.cancel()
 		}
 	}

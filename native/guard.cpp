@@ -1,4 +1,7 @@
+#include <cerrno>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <fcntl.h>
 #include <filesystem>
 #include <hyprland/src/Compositor.hpp>
@@ -18,6 +21,7 @@
 #include <map>
 #include <nlohmann/json.hpp>
 #include <set>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -26,7 +30,7 @@
 using json = nlohmann::json;
 using Clock = std::chrono::steady_clock;
 static HANDLE handle;
-static int serverFD = -1;
+static int serverFD = -1, lockFD = -1;
 static wl_event_source *serverEvent = nullptr, *timerEvent = nullptr;
 static std::string socketPath;
 struct Lease {
@@ -413,20 +417,44 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE h) {
         "computer-use-guard was built for a different Hyprland commit; rebuild "
         "it against the exact running Hyprland version");
   try {
-    std::string dir = std::string(getenv("XDG_RUNTIME_DIR")) + "/computer-use";
+    const char *runtime = getenv("XDG_RUNTIME_DIR");
+    if (!runtime || !*runtime) {
+      std::fprintf(stderr,
+                   "computer-use-guard: XDG_RUNTIME_DIR is required; refusing "
+                   "plugin initialization\n");
+      throw std::runtime_error("XDG_RUNTIME_DIR is required");
+    }
+    std::string dir = std::string(runtime) + "/computer-use";
     std::filesystem::create_directories(dir);
-    chmod(dir.c_str(), 0700);
+    if (chmod(dir.c_str(), 0700) != 0)
+      throw std::runtime_error("guard runtime directory chmod failed");
     socketPath = dir + "/guard.sock";
+    const std::string lockPath = socketPath + ".lock";
+    const int candidateLock =
+        open(lockPath.c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (candidateLock < 0)
+      throw std::runtime_error("guard socket lock creation failed");
+    if (flock(candidateLock, LOCK_EX | LOCK_NB) != 0) {
+      close(candidateLock);
+      throw std::runtime_error("guard socket already owned by another plugin");
+    }
+    lockFD = candidateLock;
     serverFD = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (serverFD < 0)
+      throw std::runtime_error("guard socket creation failed");
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
     if (socketPath.size() >= sizeof(addr.sun_path))
       throw std::runtime_error("socket path too long");
     strcpy(addr.sun_path, socketPath.c_str());
-    unlink(socketPath.c_str());
+    // The adjacent flock survives a busy event loop and is released by the
+    // kernel on compositor exit. Only its owner may reclaim a stale pathname.
+    if (unlink(socketPath.c_str()) != 0 && errno != ENOENT)
+      throw std::runtime_error("stale guard socket removal failed");
     if (bind(serverFD, (sockaddr *)&addr, sizeof(addr)) || listen(serverFD, 16))
       throw std::runtime_error("guard socket failed");
-    chmod(socketPath.c_str(), 0600);
+    if (chmod(socketPath.c_str(), 0600) != 0)
+      throw std::runtime_error("guard socket chmod failed");
     serverEvent = wl_event_loop_add_fd(g_pCompositor->m_wlEventLoop, serverFD,
                                        WL_EVENT_READABLE, acceptPeer, nullptr);
     timerEvent =
@@ -467,7 +495,13 @@ static void cleanupGuard() {
   timerEvent = nullptr;
   serverEvent = nullptr;
   serverFD = -1;
-  if (!socketPath.empty())
+  if (lockFD >= 0 && !socketPath.empty())
     unlink(socketPath.c_str());
+  if (lockFD >= 0) {
+    flock(lockFD, LOCK_UN);
+    close(lockFD);
+  }
+  lockFD = -1;
+  socketPath.clear();
 }
 APICALL EXPORT void PLUGIN_EXIT() { cleanupGuard(); }

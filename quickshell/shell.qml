@@ -60,9 +60,18 @@ ShellRoot {
         implicitHeight: 36
         radius: 8
         opacity: enabled ? 1 : 0.45
-        color: mouse.containsMouse ? Qt.lighter(tint,1.2) : tint
-        Text { id: labelText; anchors.centerIn: parent; text: button.label; textFormat: Text.PlainText; color: button.foreground; font.pixelSize: 13; font.bold: true }
-        MouseArea { id: mouse; anchors.fill: parent; hoverEnabled: true; onClicked: button.clicked() }
+        activeFocusOnTab: enabled
+        Accessible.role: Accessible.Button
+        Accessible.name: label
+        Accessible.onPressAction: if (enabled) button.clicked()
+        Keys.onReturnPressed: if (enabled) button.clicked()
+        Keys.onEnterPressed: if (enabled) button.clicked()
+        Keys.onSpacePressed: if (enabled) button.clicked()
+        color: activeFocus ? Qt.lighter(tint,1.35) : (mouse.containsMouse ? Qt.lighter(tint,1.2) : tint)
+        border.width: activeFocus ? 2 : 0
+        border.color: root.accent
+        Text { id: labelText; anchors.centerIn: parent; text: button.label; textFormat:Text.PlainText; color: button.foreground; font.pixelSize: 13; font.bold: true }
+        MouseArea { id: mouse; anchors.fill: parent; hoverEnabled: true; onClicked: { button.forceActiveFocus(); button.clicked(); } }
     }
     Picker {
         brokerState:root.state;errorText:root.lastError
