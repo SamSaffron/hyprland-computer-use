@@ -34,6 +34,7 @@ The executable is **`hyprland-computer-use`**. Use **`computer-use`** as the MCP
 | `request_permission` | Request a specific capability/scope; never grants it |
 | `wait_for_permission` | Wait up to 120 seconds for a local decision, then retry |
 | `list_windows` | Free metadata discovery; optional workspace filter, no pixels |
+| `window_state` | Surface-object IDs/geometry and declared transient toplevel relationships; metadata only |
 | `view_window` | PNG of the actual toplevel, plus its geometry revision |
 | `input_window` | Focus, move, click, drag, scroll, key chords, text; max 128 actions |
 | `record_window` | Separately approved, window-only local MP4 recording |
@@ -77,7 +78,7 @@ Coordinates are **window-local logical pixels**, not scaled screenshot pixels. `
 
 ### Batch recovery and action-and-observe
 
-Set `"then": "screenshot"` on `input_window` for an immediate post-batch PNG, optionally with `max_width`. A nonzero `max_width` without `then` is rejected. All options are validated before input. The screenshot runs only after a completed batch and uses a fresh observation check and fresh geometry. Under the existing grant model, control and record grants include observation; observation alone never includes control or recording. There is no new permission bypass.
+Set `"then": "screenshot"` on `input_window` for an immediate post-batch PNG, optionally with `max_width`. A nonzero `max_width` requires `then: "screenshot"`. All options are validated before input. The screenshot runs only after a completed batch and uses a fresh observation check and fresh geometry. Under the existing grant model, control and record grants include observation; observation alone never includes control or recording. There is no new permission bypass.
 
 The result metadata is available in both MCP `structuredContent` and a JSON text block, including runtime failures and approval responses. Images are additional content blocks. The result retains `status: completed`, `actions` and `window_id`, with nested `observation` metadata and PNG content. If capture fails or permission has gone away, `observation.status` is `failed` (or `approval_required` with a request ID), but the **input remains completed**. Retry observation, not the batch. This captures immediately; it does not wait for application rendering or promise a settled frame.
 
@@ -88,6 +89,12 @@ Runtime input errors return MCP `isError: true` with JSON text containing `statu
 Text actions accept UTF-8 Unicode, with an aggregate limit of 262,144 UTF-8 bytes per batch and a 60-second execution budget. Delivery uses bounded 48-scalar compositor transactions, without clipboard access or per-character sleeps. LF and TAB send Return and Tab; other C0/C1 controls (including CR/CRLF) are rejected before any batch effects. Convert line endings to LF. Text is keyboard input, not guaranteed literal insertion: app shortcuts, autoindent and form submission still apply.
 
 Temporary text maps go only to the target client's keyboard resources and are explicitly restored; they are never installed as the global seat keyboard. Failure progress counts Unicode scalars, not graphemes or bytes, and a lost chunk reply can leave up to 48 scalars uncertain. A text-containing batch requires the guard's `unicode_text` feature before executing any actions. Run local `setup` after updating the executable. See [Unicode/bulk text and manual test](TEXT_INPUT.md) for exact semantics and live-validation limits.
+
+### Surface routing and dialog transitions
+
+`window_state(window_id)` returns bounded mapped subsurface/popup metadata and direct XDG transient parent/child window IDs. It is free metadata, not pixels or authority. `input_window` accepts optional paired `surface_id` and `surface_revision`; coordinates then become local to that surface, including popups outside the root rectangle. Without a selector, pointer input hit-tests root subsurfaces and keyboard input targets the root. Every transaction rechecks root authority, current tree membership and geometry. Closed/foreign/stale selectors never fall back to the root. Cross-surface drags are refused before pointer-enter/press.
+
+`then: "state"` requests immediate post-batch metadata under nested `window_state`. Discovery failure does not change the completed input result, and this is not a lifecycle wait. A newly discovered toplevel still needs its own grant. **Active seat grabs remain refused**, so many grabbed menus are not yet supported. Popup capture is not guaranteed; no desktop-crop fallback exists. See [surface contract and manual test](SURFACES.md).
 
 ### Observation safety boundary
 
@@ -111,7 +118,7 @@ Native mock restoration tests and exact 0.56.2 header compilation are covered; r
 
 ## Current limitations
 
-- **Native Wayland root toplevels only for input.** XWayland input and popup/subsurface routing are not implemented. Separate transient toplevels require their own grants.
+- **Native Wayland window trees only for input.** Subsurface routing and explicit popup selection are implemented but not live-validated. Active grabs and cross-surface drags remain refused; XWayland is unsupported. Separate transient toplevels require their own grants.
 - The built-in Go Wayland client supplies virtual keyboard and pointer seat capabilities; the guard delivers input directly. It selects the dedicated US keyboard and an available trusted local virtual pointer, never a physical pointer.
 - Text supports Unicode scalars through target-client keymaps; shortcut `key` actions still use the US layout. Universal toolkit/IME behavior and physical-keyboard arbitration require live testing. See [text input](TEXT_INPUT.md).
 - No clipboard, arbitrary file, shell, accessibility-tree, or privileged-operation tool.

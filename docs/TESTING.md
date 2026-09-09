@@ -12,6 +12,14 @@ This is evidence from one disposable configuration, not a general security audit
 - The lab's Aquamarine **0.15.0** build has local nested-backend compatibility patches (xdg_wm_base version clamp and backend-supported buffer modifiers). This was not a stock physical-monitor deployment.
 - Persistent helper supplies a US virtual keyboard and virtual pointer. Guard built against the exact running compositor's headers.
 
+## Surface routing and dialog transitions — 9 September 2026
+
+Implemented `window_state`, root-scoped live surface selectors, mapped subsurface stacking/input-region routing, selected-popup coordinates, and explicit direct XDG transient parent/child metadata. `then: state` preserves completed-input status if post-discovery fails. No PID/title authority inheritance, desktop-crop capture or global input fallback was added. **Active seat grabs remain refused**; this does not establish support for grabbed toolkit menus.
+
+Native tests exercise the actual handle registry and hit/path-planning code: root binding, plugin-epoch separation, destroyed/foreign selectors, nested and negative offsets, stacking/input-region holes, popup-tree separation, bounds, and cross-surface drag refusal before delivery. Go race/SDK tests cover free metadata without authority, surface-local request propagation including Unicode, paired selectors, stale/closed selectors, full prevalidation, separate dialog approval, old-guard refusal, and post-state success/failure wire contracts. The real guard compiles against Hyprland 0.56.2. The compositor tree adapter and application effects still require live verification; no new plugin was loaded or desktop operated. Use [SURFACES.md](SURFACES.md#manual-acceptance-test).
+
+**User-reported Unicode result:** the user reported that all steps of the preceding Unicode/bulk manual test passed. Editor names/versions and bulk timings were not supplied, and this was not independently observed by the test harness. It is not evidence for the newer surface-routing path.
+
 ## Unicode/bulk text — 9 September 2026
 
 Target-scoped Unicode text now uses 48-scalar compositor transactions, without per-character sleeps/round trips or clipboard access. The broker prevalidates all text and enforces a 256 KiB aggregate UTF-8 budget plus a 60-second batch execution budget. Native code validates scalars again and sends a self-contained map only to the target's keyboard resources; the text-map carrier is never registered or set as the global keyboard.
@@ -97,7 +105,7 @@ Current-version release gate (run only with explicit authorization in a disposab
 | Hidden/minimized window | Capture rejects hidden/nonvisible targets; no unhide fallback |
 | Same-application windows | Unverified current-version toolkit behavior; verify both windows' content and next human input |
 | Held modifiers, keys/buttons, grabs | Mock refusal tested; physical arbitration remains a live gate |
-| Popup/subsurface, new dialogs | Root-only input; no inherited transient-toplevel grant. Unsupported routing must not be presented as verified |
+| Popup/subsurface, new dialogs | Surface routing implemented, live validation pending; active grabs refused and no transient-toplevel grant inheritance. See SURFACES.md |
 | Mixed-DPI / resized target | Validate decoded image-to-logical transforms against real pixels and reject stale geometry |
 | Lock/session deactivation | Begin screenshot and recording, lock before/during capture, then unlock; no new locked frames may be returned/written. Check errors and recording termination. Repeat guard loss and rapid lock/unlock; polling is not an atomic fence |
 | Revoke/pause/supervisor loss/disconnect | Interrupt long text and capture through real MCP; verify no subsequent transactions/frames, inspect reported acknowledgements, and verify next physical input |

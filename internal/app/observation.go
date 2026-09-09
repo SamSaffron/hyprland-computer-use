@@ -100,6 +100,14 @@ func (b *Broker) inputTool(ctx context.Context, client string, a InputArgs) (*mc
 	if meta["status"] != "completed" || a.Then == "" {
 		return resultContent(meta, nil, false), nil, nil
 	}
+	if a.Then == "state" {
+		state, err := b.windowStateResult(ctx, a.Window)
+		if err != nil {
+			state = map[string]any{"status": "failed", "error": err.Error()}
+		}
+		meta["window_state"] = state
+		return resultContent(meta, nil, false), nil, nil
+	}
 	observation, data, err := b.observe(ctx, client, a.Window, a.MaxWidth)
 	if err != nil {
 		// The batch completed: never turn an observation failure into a request to

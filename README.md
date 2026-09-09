@@ -81,6 +81,7 @@ No autostart service or compositor-config edit is installed. Service/config-mana
 | [Remote access / OAuth](docs/AUTH.md) | HTTP, TLS, authentication and connection approval |
 | [Development](docs/DEVELOPMENT.md) | Source layout, builds, tests, manual plugin loading |
 | [Releasing](docs/RELEASING.md) | GoReleaser archives, checksums, publishing workflow |
+| [Popups, subsurfaces and dialogs](docs/SURFACES.md) | Surface selectors, separate dialog approval and current limitations |
 | [Unicode and bulk text](docs/TEXT_INPUT.md) | Text contract, upgrade requirements and two-window manual test |
 | [Testing status](docs/TESTING.md) | Exact lab versions, verified and unverified behavior |
 | [Security](SECURITY.md) | Trust boundaries and guarantees |

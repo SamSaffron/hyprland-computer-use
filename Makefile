@@ -12,7 +12,7 @@ $(BIN):
 $(BIN)/hyprland-computer-use: $(GO_SOURCES) $(wildcard native/*) $(wildcard quickshell/*.qml) Makefile LICENSE THIRD_PARTY.md go.mod go.sum | $(BIN)
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $@ ./cmd/hyprland-computer-use
 native: $(BIN)/guard.so
-$(BIN)/guard.so: native/guard.cpp native/input_transaction.hpp native/text_transaction.hpp native/text_keymap.hpp native/text_keyboard.hpp | $(BIN)
+$(BIN)/guard.so: native/guard.cpp native/surface_tree.hpp native/surface_routing.hpp native/input_transaction.hpp native/text_transaction.hpp native/text_keymap.hpp native/text_keyboard.hpp | $(BIN)
 	$(CXX) -std=c++23 -shared -fPIC -fno-gnu-unique $$(pkg-config --cflags hyprland libeis-1.0) $< -o $@
 setup-native: native $(BIN)/header-version $(BIN)/setup-inspector.so
 $(BIN)/setup-inspector.so: native/setup_inspector.cpp | $(BIN)
@@ -29,9 +29,12 @@ fmt-check:
 	fi
 vet:
 	go vet ./...
-native-test: $(BIN)/input-transaction-test $(BIN)/text-keyboard-test
+native-test: $(BIN)/input-transaction-test $(BIN)/text-keyboard-test $(BIN)/surface-routing-test
 	$(BIN)/input-transaction-test
 	$(BIN)/text-keyboard-test
+	$(BIN)/surface-routing-test
+$(BIN)/surface-routing-test: native/surface_routing_test.cpp native/surface_routing.hpp | $(BIN)
+	$(CXX) -std=c++23 -Wall -Wextra -Werror $< -o $@
 $(BIN)/text-keyboard-test: native/text_keyboard_test.cpp native/text_keymap.hpp native/text_keyboard.hpp | $(BIN)
 	$(CXX) -std=c++23 -Wall -Wextra -Werror $< -o $@
 .PHONY: native-text-wire-test

@@ -49,7 +49,7 @@ func (b *Broker) newMCPServer(id string, opts *mcp.ServerOptions) *mcp.Server {
 				rs = append(rs, *r)
 			}
 		}
-		return map[string]any{"mode": b.mode, "paused": b.paused, "supervisor_connected": b.uiCount > 0, "client_id": id, "grants": gs, "requests": rs, "limitations": []string{"native Wayland windows only", "root toplevel input; popup sub-surfaces not yet supported", "Unicode text via target-client keymaps; toolkit behavior needs live validation", "no privilege broker"}}, nil
+		return map[string]any{"mode": b.mode, "paused": b.paused, "supervisor_connected": b.uiCount > 0, "client_id": id, "grants": gs, "requests": rs, "limitations": []string{"native Wayland windows only", "surface-tree input; active grabs and cross-surface drags refused", "Unicode text via target-client keymaps; toolkit behavior needs live validation", "no privilege broker"}}, nil
 	})
 	type PermissionArgs struct {
 		Capability string `json:"capability" jsonschema:"observe, control, record, or launch"`
@@ -124,6 +124,11 @@ func (b *Broker) newMCPServer(id string, opts *mcp.ServerOptions) *mcp.Server {
 		}
 		return map[string]any{"status": "ok", "windows": out}, nil
 	})
+	tool(s, "window_state", "Discover bounded compositor-owned popup/subsurface geometry and explicit transient-parent/child window IDs. Metadata only: no pixels, semantic contents or grants. Input to a new toplevel needs a separate grant. Use surface_id and its revision for popup-local input; active seat grabs remain refused.", func(ctx context.Context, a struct {
+		Window string `json:"window_id"`
+	}) (any, error) {
+		return b.windowStateResult(ctx, a.Window)
+	})
 	type ViewArgs struct {
 		Window   string `json:"window_id" jsonschema:"Instance-bound window ID returned by list_windows"`
 		MaxWidth int    `json:"max_width,omitempty" jsonschema:"0 defaults to 1280; accepted range 0–1920"`
@@ -135,7 +140,7 @@ func (b *Broker) newMCPServer(id string, opts *mcp.ServerOptions) *mcp.Server {
 		}
 		return resultContent(meta, data, false), nil, nil
 	})
-	mcp.AddTool(s, &mcp.Tool{Name: "input_window", Description: "Perform up to 128 fully prevalidated root-toplevel actions with a 60-second execution budget. Unicode text is limited to 262144 UTF-8 bytes per batch and delivered in 48-scalar chunks without clipboard access. Window-local logical coordinates and exact geometry revision required. Ordinary input restores focus without cursor warp; explicit focus activates. No global fallback. Runtime failures report acknowledged action/character counts; the failed transaction may still have effects, so re-observe before retrying. Optional then=screenshot observes only after a completed batch and rechecks observation permission; observation failure never means replay the batch."}, func(ctx context.Context, _ *mcp.CallToolRequest, a InputArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(s, &mcp.Tool{Name: "input_window", Description: "Perform up to 128 fully prevalidated window-scoped actions with a 60-second execution budget. Unicode text is limited to 262144 UTF-8 bytes per batch and delivered in 48-scalar chunks without clipboard access. Window-local logical coordinates and exact geometry revision required by default. Optional surface_id plus surface_revision from window_state selects surface-local coordinates, including popups. Pointer input hit-tests subsurfaces; crossing surfaces within a drag is refused. Ordinary input restores focus without cursor warp; explicit focus activates. No global fallback. Runtime failures report acknowledged action/character counts; the failed transaction may still have effects, so re-observe before retrying. Optional then=state returns surface/dialog metadata; then=screenshot observes only after a completed batch and rechecks observation permission; observation failure never means replay the batch."}, func(ctx context.Context, _ *mcp.CallToolRequest, a InputArgs) (*mcp.CallToolResult, any, error) {
 		return b.inputTool(ctx, id, a)
 	})
 	tool(s, "record_window", "Start a local, window-only MP4 recording. Separate record permission required. Stops on revoke, expiry, disconnect or 10-minute cap.", func(ctx context.Context, a struct {

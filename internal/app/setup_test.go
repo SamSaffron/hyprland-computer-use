@@ -15,7 +15,7 @@ func TestNativeBundleExtraction(t *testing.T) {
 	if err := extractNative(dir); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"Makefile", "LICENSE", "THIRD_PARTY.md", "native/guard.cpp", "native/input_transaction.hpp", "native/text_transaction.hpp", "native/text_keymap.hpp", "native/text_keyboard.hpp", "native/setup_inspector.cpp", "native/version.cpp", "native/virtual-keyboard-unstable-v1.xml", "native/wlr-virtual-pointer-unstable-v1.xml"} {
+	for _, path := range []string{"Makefile", "LICENSE", "THIRD_PARTY.md", "native/guard.cpp", "native/input_transaction.hpp", "native/surface_routing.hpp", "native/surface_tree.hpp", "native/text_transaction.hpp", "native/text_keymap.hpp", "native/text_keyboard.hpp", "native/setup_inspector.cpp", "native/version.cpp", "native/virtual-keyboard-unstable-v1.xml", "native/wlr-virtual-pointer-unstable-v1.xml"} {
 		want, err := os.ReadFile(filepath.Join("..", "..", path))
 		if err != nil {
 			t.Fatal(err)

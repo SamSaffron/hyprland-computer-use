@@ -99,21 +99,6 @@ func (d *Desktop) guard(ctx context.Context, q map[string]any) error {
 		}
 		textCount = len(scalars)
 	}
-	c, e := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "unix", filepath.Join(d.Dir, "guard.sock"))
-	if e != nil {
-		return fmt.Errorf("compositor_guard_unavailable: %w", e)
-	}
-	defer c.Close()
-	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
-	defer stop()
-	deadline := time.Now().Add(2 * time.Second)
-	if until, ok := ctx.Deadline(); ok && until.Before(deadline) {
-		deadline = until
-	}
-	_ = c.SetDeadline(deadline)
-	if e = json.NewEncoder(c).Encode(q); e != nil {
-		return e
-	}
 	var r struct {
 		OK                  bool   `json:"ok"`
 		Error               string `json:"error"`
@@ -125,7 +110,7 @@ func (d *Desktop) guard(ctx context.Context, q map[string]any) error {
 		TextChunkRunes      int    `json:"text_chunk_runes"`
 		CompletedCharacters *int   `json:"completed_characters"`
 	}
-	if e = json.NewDecoder(io.LimitReader(c, 16384)).Decode(&r); e != nil {
+	if e := d.guardExchange(ctx, q, &r); e != nil {
 		return e
 	}
 	if q["op"] == "text_transaction" {
@@ -207,11 +192,13 @@ func (d *Desktop) capture(ctx context.Context, w Window, maxWidth int) ([]byte, 
 }
 
 type InputArgs struct {
-	Then     string   `json:"then,omitempty" jsonschema:"Omit or screenshot: capture after a completed batch, with a fresh observation permission check"`
-	MaxWidth int      `json:"max_width,omitempty" jsonschema:"Post-action screenshot width limit, 0 defaults to 1280, maximum 1920"`
-	Window   string   `json:"window_id" jsonschema:"Window ID returned by list_windows"`
-	Revision string   `json:"revision" jsonschema:"Exact geometry revision from list_windows or view_window"`
-	Actions  []Action `json:"actions" jsonschema:"Ordered actions, maximum 128; coordinates are window-local logical pixels"`
+	Surface         string   `json:"surface_id,omitempty" jsonschema:"Optional instance-bound surface ID from window_state; with surface_revision, coordinates become surface-local. Omit both for window-local root/subsurface hit testing."`
+	SurfaceRevision string   `json:"surface_revision,omitempty" jsonschema:"Exact selected surface geometry revision from window_state; required with surface_id"`
+	Then            string   `json:"then,omitempty" jsonschema:"Omit, screenshot (permission-checked pixels), or state (surface/dialog metadata) after a completed batch"`
+	MaxWidth        int      `json:"max_width,omitempty" jsonschema:"Post-action screenshot width limit, 0 defaults to 1280, maximum 1920"`
+	Window          string   `json:"window_id" jsonschema:"Window ID returned by list_windows"`
+	Revision        string   `json:"revision" jsonschema:"Exact geometry revision from list_windows or view_window"`
+	Actions         []Action `json:"actions" jsonschema:"Ordered actions, maximum 128; coordinates are window-local logical pixels by default, or selected-surface-local when surface_id is provided"`
 }
 type Action struct {
 	Type       string  `json:"type" jsonschema:"focus, move, click, drag, scroll, key, or text"`
@@ -288,6 +275,9 @@ func runeKey(r rune) (uint32, uint32, error) {
 	return 0, 0, fmt.Errorf("unsupported text character %U; keyboard layout is US ASCII", r)
 }
 func validatePointer(a Action, size [2]int) error {
+	return validatePointerSize(a, [2]float64{float64(size[0]), float64(size[1])})
+}
+func validatePointerSize(a Action, size [2]float64) error {
 	if a.Type != "move" && a.Type != "click" && a.Type != "drag" && a.Type != "scroll" {
 		return nil
 	}
@@ -318,10 +308,10 @@ func (e *InputFailure) Unwrap() error { return e.Cause }
 func (b *Broker) input(ctx context.Context, client string, a InputArgs) (map[string]any, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	if a.Then != "" && a.Then != "screenshot" {
-		return nil, errors.New("then must be omitted or screenshot")
+	if a.Then != "" && a.Then != "screenshot" && a.Then != "state" {
+		return nil, errors.New("then must be omitted, screenshot, or state")
 	}
-	if a.MaxWidth < 0 || a.MaxWidth > 1920 || (a.MaxWidth != 0 && a.Then == "") {
+	if a.MaxWidth < 0 || a.MaxWidth > 1920 || (a.MaxWidth != 0 && a.Then != "screenshot") {
 		return nil, errors.New("max_width requires then=screenshot and must be 0–1920")
 	}
 	if len(a.Actions) == 0 || len(a.Actions) > 128 {
@@ -337,10 +327,41 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (map[str
 	if a.Revision != w.Revision {
 		return nil, errors.New("stale_geometry")
 	}
+	if (a.Surface == "") != (a.SurfaceRevision == "") || len(a.Surface) > 128 || len(a.SurfaceRevision) > 256 {
+		return nil, errors.New("surface_id and surface_revision must be provided together")
+	}
+	bounds := [2]float64{float64(w.Size[0]), float64(w.Size[1])}
+	if a.Surface != "" {
+		state, err := b.backend.windowState(ctx, w.ID)
+		if err != nil {
+			return nil, err
+		}
+		if state.Revision != a.Revision {
+			return nil, errors.New("stale_geometry")
+		}
+		found := false
+		for _, surface := range state.Surfaces {
+			if surface.ID != a.Surface {
+				continue
+			}
+			if surface.Revision != a.SurfaceRevision {
+				return nil, errors.New("stale_surface_geometry")
+			}
+			bounds = surface.Size
+			found = true
+			break
+		}
+		if !found {
+			return nil, errors.New("surface_unavailable_rediscover")
+		}
+	}
 	// Validate all actions before any effects.
 	totalTextBytes := 0
 	hasText := false
 	for _, ac := range a.Actions {
+		if a.Surface != "" && ac.Type == "focus" {
+			return nil, errors.New("surface focus action is unsupported; omit surface_id for explicit window activation")
+		}
 		switch ac.Type {
 		case "focus", "move", "click", "drag", "scroll":
 		case "text":
@@ -359,7 +380,7 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (map[str
 		default:
 			return nil, errors.New("unsupported action")
 		}
-		if err := validatePointer(ac, w.Size); err != nil {
+		if err := validatePointerSize(ac, bounds); err != nil {
 			return nil, err
 		}
 		if ac.DurationMS < 0 || ac.DurationMS > 5000 {
@@ -416,6 +437,10 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (map[str
 		}
 		q["token"] = token
 		q["revision"] = a.Revision
+		if a.Surface != "" {
+			q["surface_id"] = a.Surface
+			q["surface_revision"] = a.SurfaceRevision
+		}
 		return b.backend.guard(ctx, q)
 	}
 	key := func(c, mods uint32) error {
@@ -607,4 +632,24 @@ func (b *Broker) record(client string, w Window) (any, error) {
 }
 func readLine(c net.Conn) ([]byte, error) {
 	return bufio.NewReader(io.LimitReader(c, 1<<20)).ReadBytes('\n')
+}
+
+// Shared private guard transport; metadata replies are bounded as well as input replies.
+func (d *Desktop) guardExchange(ctx context.Context, q map[string]any, result any) error {
+	c, e := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "unix", filepath.Join(d.Dir, "guard.sock"))
+	if e != nil {
+		return fmt.Errorf("compositor_guard_unavailable: %w", e)
+	}
+	defer c.Close()
+	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
+	defer stop()
+	deadline := time.Now().Add(2 * time.Second)
+	if until, ok := ctx.Deadline(); ok && until.Before(deadline) {
+		deadline = until
+	}
+	_ = c.SetDeadline(deadline)
+	if e = json.NewEncoder(c).Encode(q); e != nil {
+		return e
+	}
+	return json.NewDecoder(io.LimitReader(c, 64<<10)).Decode(result)
 }

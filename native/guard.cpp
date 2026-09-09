@@ -64,6 +64,7 @@ static bool locked() {
 #include "input_transaction.hpp"
 #include "text_transaction.hpp"
 #include "text_keyboard.hpp"
+#include "surface_tree.hpp"
 
 static void clear() { leases.clear(); }
 static void expire() {
@@ -86,9 +87,15 @@ static json execute(const json &q, pid_t owner) {
             {"focus_preserving", true},
             {"unicode_text", true},
             {"text_chunk_runes", TEXT_CHUNK_RUNES},
+            {"surface_tree_version", 1},
             {"input_faulted", inputFaulted},
             {"leases", leases.size()},
             {"locked", locked()}};
+  if (op == "window_state") {
+    auto w = findWindow(q.value("window", ""));
+    if (!w || w->m_isX11) throw std::runtime_error("native_window_required");
+    return {{"ok", true}, {"state", windowState(w)}};
+  }
   if (op == "clear") {
     clear();
     return {{"ok", true}};
@@ -134,13 +141,14 @@ static json execute(const json &q, pid_t owner) {
     throw std::runtime_error("target_not_visible");
   if (q.value("revision", "") != revision(w))
     throw std::runtime_error("stale_geometry");
-  auto surf = w->resource();
-  if (!surf)
-    throw std::runtime_error("target_surface_missing");
+  const auto nodes = windowSurfaceTree(w);
+  const auto selected = selectWindowSurface(w, nodes, q);
+  auto surf = selected.surface;
   // Only an explicit focus request changes desktop activation. Ordinary
   // input borrows protocol focus within one event-loop callback and restores
   // it.
   if (op == "focus") {
+    if (!q.value("surface_id", "").empty()) throw std::runtime_error("surface_focus_action_unsupported");
     requireIdleInput();
     Desktop::focusState()->fullWindowFocus(w, Desktop::FOCUS_REASON_OTHER,
                                            surf);
@@ -176,10 +184,8 @@ static json execute(const json &q, pid_t owner) {
     if (kind != "move" && kind != "click" && kind != "scroll" && kind != "drag")
       throw std::runtime_error("invalid_pointer_transaction");
     const auto box = w->getWindowMainSurfaceBox();
-    const auto valid = [&](double x, double y) {
-      return std::isfinite(x) && std::isfinite(y) && x >= 0 && y >= 0 &&
-             x < box.w && y < box.h;
-    };
+    const auto size = q.value("surface_id", "").empty() ? box.size() : selected.size;
+    const auto valid = [&](double x, double y) { return surfacePointInside({x, y}, size); };
     double x = q.value("x", -1.0), y = q.value("y", -1.0);
     double toX = q.value("to_x", x), toY = q.value("to_y", y);
     uint32_t button = q.value("button", 272u);
@@ -193,18 +199,22 @@ static json execute(const json &q, pid_t owner) {
     if (q.value("duration_ms", 0) != 0)
       throw std::runtime_error("timed_drag_unsupported_use_duration_zero");
     // Validate everything above before sending even a pointer enter.
-    InputTransaction transaction(surf, true);
-    transaction.borrowPointer({x, y});
-    transaction.motion({x, y});
+    const auto path = planSurfacePath(nodes, size, {x, y}, {toX, toY}, kind == "drag",
+        [&](Vector2D point) {
+          return hitSurfaceTree(nodes, selected, point, [](auto surface, Vector2D local) {
+            return surface->m_current.effectiveInputRegion().containsPoint(local);
+          });
+        });
+    InputTransaction transaction(path.surface, true);
+    transaction.borrowPointer(path.points.front());
+    transaction.motion(path.points.front());
     if (kind == "click" || kind == "drag") {
       transaction.button(button, true);
       if (kind == "drag") {
         // Bounded burst, no sleep/dispatch with a button held or focus
         // borrowed.
-        for (int i = 1; i <= 20; ++i) {
-          const double t = i / 20.0;
-          transaction.motion({x + (toX - x) * t, y + (toY - y) * t});
-        }
+        for (size_t i = 1; i < path.points.size(); ++i)
+          transaction.motion(path.points[i]);
       }
       transaction.button(button, false);
     } else if (kind == "scroll") {
