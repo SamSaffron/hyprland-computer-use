@@ -62,11 +62,21 @@ static bool locked() {
          g_pSessionLockManager->isSessionLocked();
 }
 #include "input_transaction.hpp"
-#include "text_transaction.hpp"
-#include "text_keyboard.hpp"
 #include "surface_tree.hpp"
+#include "text_keyboard.hpp"
+#include "text_transaction.hpp"
+static const std::string guardInstance = surfaceEpoch();
+#ifdef COMPUTER_USE_INDEPENDENT_SEAT
+#include "independent_seat.hpp"
+#endif
 
-static void clear() { leases.clear(); }
+static void clear() {
+#ifdef COMPUTER_USE_INDEPENDENT_SEAT
+  if (independentSeat)
+    independentSeat->reset();
+#endif
+  leases.clear();
+}
 static void expire() {
   for (auto it = leases.begin(); it != leases.end();) {
     if (locked() || Clock::now() >= it->second.until || !it->second.window ||
@@ -76,15 +86,50 @@ static void expire() {
     } else
       ++it;
   }
+#ifdef COMPUTER_USE_INDEPENDENT_SEAT
+  if (independentSeat)
+    independentSeat->tick();
+#endif
 }
 static json execute(const json &q, pid_t owner) {
   expire();
   auto op = q.value("op", "");
+  const auto expectedInstance = q.value("instance", "");
+  if (!expectedInstance.empty() && expectedInstance != guardInstance)
+    throw std::runtime_error("compositor_instance_changed_restart_broker");
+#ifdef COMPUTER_USE_INDEPENDENT_SEAT
+  if (op != "status" && expectedInstance != guardInstance)
+    throw std::runtime_error("compositor_instance_required");
+#endif
+  if (op == "input_modes") {
+    json modes = json::object();
+    for (auto &window : Desktop::windowState()->windows()) {
+      if (!window->m_isMapped || window->m_isX11)
+        continue;
+      bool seat = false;
+#ifdef COMPUTER_USE_INDEPENDENT_SEAT
+      seat = independentSeat->supports(window->resource());
+#endif
+      modes[std::format("{:x}", window->m_stableID)] =
+          seat ? "Seat" : "Fallback";
+    }
+    return {{"ok", true}, {"modes", modes}};
+  }
   if (op == "status")
     return {{"ok", true},
             {"backend", "hyprland-compositor"},
+#ifdef COMPUTER_USE_INDEPENDENT_SEAT
+            {"version", 3},
+#else
             {"version", 2},
+#endif
             {"focus_preserving", true},
+#ifdef COMPUTER_USE_INDEPENDENT_SEAT
+            {"independent_seat", true},
+            {"automatic_fallback", true},
+            {"seat_resources", independentSeat->clients()},
+            {"refused_popup_grabs", independentSeat->deniedGrabs()},
+#endif
             {"unicode_text", true},
             {"text_chunk_runes", TEXT_CHUNK_RUNES},
             {"surface_tree_version", 1},
@@ -93,7 +138,8 @@ static json execute(const json &q, pid_t owner) {
             {"locked", locked()}};
   if (op == "window_state") {
     auto w = findWindow(q.value("window", ""));
-    if (!w || w->m_isX11) throw std::runtime_error("native_window_required");
+    if (!w || w->m_isX11)
+      throw std::runtime_error("native_window_required");
     return {{"ok", true}, {"state", windowState(w)}};
   }
   if (op == "clear") {
@@ -102,6 +148,9 @@ static json execute(const json &q, pid_t owner) {
   }
   auto token = q.value("token", "");
   if (op == "revoke") {
+#ifdef COMPUTER_USE_INDEPENDENT_SEAT
+    independentSeat->revoke(token);
+#endif
     auto it = leases.find(token);
     if (it != leases.end()) {
       leases.erase(it);
@@ -123,6 +172,10 @@ static json execute(const json &q, pid_t owner) {
     int ms = q.value("milliseconds", 0);
     if (ms < 1 || ms > 3600000)
       throw std::runtime_error("invalid_duration");
+#ifdef COMPUTER_USE_INDEPENDENT_SEAT
+    independentSeat->revoke(
+        token); // renewed/replaced leases cannot retain old serials
+#endif
     leases[token] = {w, w->resource(),
                      Clock::now() + std::chrono::milliseconds(ms)};
     return {{"ok", true}};
@@ -141,14 +194,22 @@ static json execute(const json &q, pid_t owner) {
     throw std::runtime_error("target_not_visible");
   if (q.value("revision", "") != revision(w))
     throw std::runtime_error("stale_geometry");
+  if (inputFaulted)
+    throw std::runtime_error("input_restore_failed_reload_plugin");
   const auto nodes = windowSurfaceTree(w);
   const auto selected = selectWindowSurface(w, nodes, q);
   auto surf = selected.surface;
-  // Only an explicit focus request changes desktop activation. Ordinary
-  // input borrows protocol focus within one event-loop callback and restores
-  // it.
+  bool useSeat = false;
+#ifdef COMPUTER_USE_INDEPENDENT_SEAT
+  useSeat = independentSeat->supports(l.surface.lock());
+#endif
+  const auto inputMode = useSeat ? "seat" : "fallback";
+  // Only this explicit action requests desktop activation. Default input
+  // prefers its own seat and otherwise borrows/restores native focus.
+  // Application-created toplevels/activation requests are not suppressed.
   if (op == "focus") {
-    if (!q.value("surface_id", "").empty()) throw std::runtime_error("surface_focus_action_unsupported");
+    if (!q.value("surface_id", "").empty())
+      throw std::runtime_error("surface_focus_action_unsupported");
     requireIdleInput();
     Desktop::focusState()->fullWindowFocus(w, Desktop::FOCUS_REASON_OTHER,
                                            surf);
@@ -156,36 +217,61 @@ static json execute(const json &q, pid_t owner) {
     uint32_t key = q.value("key", 0u), mods = q.value("mods", 0u);
     if (key > 255 || mods > 255)
       throw std::runtime_error("invalid_key");
-    auto agent = agentKeyboard(owner);
-    InputTransaction transaction(surf, false);
-    transaction.borrowKeyboard(agent);
-    transaction.key(key, mods);
-    transaction.finish();
+#ifdef COMPUTER_USE_INDEPENDENT_SEAT
+    if (useSeat) {
+      independentSeat->begin(token, l.surface.lock(), surf, {}, true,
+                             !q.value("surface_id", "").empty());
+      independentSeat->key(key, mods);
+    } else
+#endif
+    {
+      auto agent = agentKeyboard(owner);
+      InputTransaction transaction(surf, false);
+      transaction.borrowKeyboard(agent);
+      transaction.key(key, mods);
+      transaction.finish();
+    }
   } else if (op == "text_transaction") {
     const auto values = q.value("scalars", json::array());
-    if (!values.is_array() || values.empty() || values.size() > TEXT_CHUNK_RUNES)
+    if (!values.is_array() || values.empty() ||
+        values.size() > TEXT_CHUNK_RUNES)
       throw std::runtime_error("invalid_text_chunk_size");
     std::vector<uint32_t> scalars;
     for (const auto &value : values) {
       if (!value.is_number_integer() || value < 0 || value > 0x10ffff)
         throw std::runtime_error("invalid_text_scalar");
       const auto scalar = value.get<uint32_t>();
-      textKeysym(scalar); // reject controls/surrogates before allocating the map
+      textKeysym(
+          scalar); // reject controls/surrogates before allocating the map
       scalars.push_back(scalar);
     }
-    auto agent = agentKeyboard(owner);
-    textTransaction(surf, agent, scalars, [](const std::string &map) {
-      return makeShared<TextKeyboard>(map);
-    });
-    return {{"ok", true}, {"revision", revision(w)},
+#ifdef COMPUTER_USE_INDEPENDENT_SEAT
+    if (useSeat) {
+      independentSeat->begin(token, l.surface.lock(), surf, {}, true,
+                             !q.value("surface_id", "").empty());
+      independentSeat->text(scalars);
+    } else
+#endif
+    {
+      auto agent = agentKeyboard(owner);
+      textTransaction(surf, agent, scalars, [](const std::string &map) {
+        return makeShared<TextKeyboard>(map);
+      });
+    }
+    return {{"ok", true},
+            {"revision", revision(w)},
+            {"input_mode", inputMode},
             {"completed_characters", scalars.size()}};
   } else if (op == "pointer_transaction") {
     const auto kind = q.value("kind", "");
     if (kind != "move" && kind != "click" && kind != "scroll" && kind != "drag")
       throw std::runtime_error("invalid_pointer_transaction");
     const auto box = w->getWindowMainSurfaceBox();
-    const auto size = q.value("surface_id", "").empty() ? box.size() : selected.size;
-    const auto valid = [&](double x, double y) { return surfacePointInside({x, y}, size); };
+    const auto size =
+        q.value("surface_id", "").empty() ? box.size() : selected.size;
+    const auto valid = [&](double x, double y) {
+      return surfacePointInside({x, y}, size);
+    };
     double x = q.value("x", -1.0), y = q.value("y", -1.0);
     double toX = q.value("to_x", x), toY = q.value("to_y", y);
     uint32_t button = q.value("button", 272u);
@@ -199,35 +285,54 @@ static json execute(const json &q, pid_t owner) {
     if (q.value("duration_ms", 0) != 0)
       throw std::runtime_error("timed_drag_unsupported_use_duration_zero");
     // Validate everything above before sending even a pointer enter.
-    const auto path = planSurfacePath(nodes, size, {x, y}, {toX, toY}, kind == "drag",
-        [&](Vector2D point) {
-          return hitSurfaceTree(nodes, selected, point, [](auto surface, Vector2D local) {
-            return surface->m_current.effectiveInputRegion().containsPoint(local);
-          });
+    const auto path = planSurfacePath(
+        nodes, size, {x, y}, {toX, toY}, kind == "drag", [&](Vector2D point) {
+          return hitSurfaceTree(
+              nodes, selected, point, [](auto surface, Vector2D local) {
+                return surface->m_current.effectiveInputRegion().containsPoint(
+                    local);
+              });
         });
-    InputTransaction transaction(path.surface, true);
-    transaction.borrowPointer(path.points.front());
-    transaction.motion(path.points.front());
-    if (kind == "click" || kind == "drag") {
-      transaction.button(button, true);
-      if (kind == "drag") {
-        // Bounded burst, no sleep/dispatch with a button held or focus
-        // borrowed.
-        for (size_t i = 1; i < path.points.size(); ++i)
-          transaction.motion(path.points[i]);
+#ifdef COMPUTER_USE_INDEPENDENT_SEAT
+    if (useSeat) {
+      independentSeat->begin(token, l.surface.lock(), path.surface,
+                             path.points.front());
+      independentSeat->motion(path.points.front());
+      if (kind == "click" || kind == "drag") {
+        independentSeat->button(button, true);
+        if (kind == "drag")
+          for (size_t i = 1; i < path.points.size(); ++i)
+            independentSeat->motion(path.points[i]);
+        independentSeat->button(button, false);
+      } else if (kind == "scroll")
+        independentSeat->scroll(delta);
+    } else
+#endif
+    {
+      InputTransaction transaction(path.surface, true);
+      transaction.borrowPointer(path.points.front());
+      transaction.motion(path.points.front());
+      if (kind == "click" || kind == "drag") {
+        transaction.button(button, true);
+        if (kind == "drag") {
+          // Bounded burst, no sleep/dispatch with a button held or focus
+          // borrowed.
+          for (size_t i = 1; i < path.points.size(); ++i)
+            transaction.motion(path.points[i]);
+        }
+        transaction.button(button, false);
+      } else if (kind == "scroll") {
+        g_pSeatManager->sendPointerAxis(
+            millis(), WL_POINTER_AXIS_VERTICAL_SCROLL, delta, 0,
+            (int)(delta * 12), WL_POINTER_AXIS_SOURCE_WHEEL,
+            WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL);
+        g_pSeatManager->sendPointerFrame();
       }
-      transaction.button(button, false);
-    } else if (kind == "scroll") {
-      g_pSeatManager->sendPointerAxis(
-          millis(), WL_POINTER_AXIS_VERTICAL_SCROLL, delta, 0,
-          (int)(delta * 12), WL_POINTER_AXIS_SOURCE_WHEEL,
-          WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL);
-      g_pSeatManager->sendPointerFrame();
+      transaction.finish();
     }
-    transaction.finish();
   } else
     throw std::runtime_error("unknown_operation_update_broker_and_plugin");
-  return {{"ok", true}, {"revision", revision(w)}};
+  return {{"ok", true}, {"revision", revision(w)}, {"input_mode", inputMode}};
 }
 static void closePeer(Peer *p) {
   wl_event_source_remove(p->event);
@@ -259,15 +364,19 @@ static int readPeer(int fd, uint32_t mask, void *data) {
   bool textRequest = false;
   try {
     const auto q = json::parse(p->data);
-    textRequest = q.is_object() && q.contains("op") && q["op"] == "text_transaction";
+    textRequest =
+        q.is_object() && q.contains("op") && q["op"] == "text_transaction";
     out = execute(q, p->pid);
   } catch (const TextFailure &e) {
-    out = {{"ok", false}, {"error", e.what()},
+    out = {{"ok", false},
+           {"error", e.what()},
            {"completed_characters", e.completed}};
   } catch (const std::exception &e) {
     out = {{"ok", false}, {"error", e.what()}};
-    if (textRequest) out["completed_characters"] = 0;
+    if (textRequest)
+      out["completed_characters"] = 0;
   }
+  out["instance"] = guardInstance;
   auto text = out.dump() + "\n";
   send(fd, text.data(), text.size(), MSG_NOSIGNAL);
   closePeer(p);
@@ -295,37 +404,57 @@ static int tick(void *) {
   wl_event_source_timer_update(timerEvent, 50);
   return 0;
 }
+static void cleanupGuard();
 APICALL EXPORT std::string PLUGIN_API_VERSION() { return HYPRLAND_API_VERSION; }
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE h) {
   handle = h;
   if (HyprlandAPI::getHyprlandVersion(h).hash != GIT_COMMIT_HASH)
     throw std::runtime_error(
         "Rebuild computer-use-guard against this exact Hyprland version");
-  std::string dir = std::string(getenv("XDG_RUNTIME_DIR")) + "/computer-use";
-  std::filesystem::create_directories(dir);
-  chmod(dir.c_str(), 0700);
-  socketPath = dir + "/guard.sock";
-  serverFD = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-  sockaddr_un addr{};
-  addr.sun_family = AF_UNIX;
-  if (socketPath.size() >= sizeof(addr.sun_path))
-    throw std::runtime_error("socket path too long");
-  strcpy(addr.sun_path, socketPath.c_str());
-  unlink(socketPath.c_str());
-  if (bind(serverFD, (sockaddr *)&addr, sizeof(addr)) || listen(serverFD, 16))
-    throw std::runtime_error("guard socket failed");
-  chmod(socketPath.c_str(), 0600);
-  serverEvent = wl_event_loop_add_fd(g_pCompositor->m_wlEventLoop, serverFD,
-                                     WL_EVENT_READABLE, acceptPeer, nullptr);
-  timerEvent =
-      wl_event_loop_add_timer(g_pCompositor->m_wlEventLoop, tick, nullptr);
-  wl_event_source_timer_update(timerEvent, 50);
-  return {"computer-use-guard",
-          "Window-scoped seat delivery for the Computer Use broker",
-          "Computer Use", "0.2.0"};
+  try {
+    std::string dir = std::string(getenv("XDG_RUNTIME_DIR")) + "/computer-use";
+    std::filesystem::create_directories(dir);
+    chmod(dir.c_str(), 0700);
+    socketPath = dir + "/guard.sock";
+    serverFD = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    if (socketPath.size() >= sizeof(addr.sun_path))
+      throw std::runtime_error("socket path too long");
+    strcpy(addr.sun_path, socketPath.c_str());
+    unlink(socketPath.c_str());
+    if (bind(serverFD, (sockaddr *)&addr, sizeof(addr)) || listen(serverFD, 16))
+      throw std::runtime_error("guard socket failed");
+    chmod(socketPath.c_str(), 0600);
+    serverEvent = wl_event_loop_add_fd(g_pCompositor->m_wlEventLoop, serverFD,
+                                       WL_EVENT_READABLE, acceptPeer, nullptr);
+    timerEvent =
+        wl_event_loop_add_timer(g_pCompositor->m_wlEventLoop, tick, nullptr);
+    if (!serverEvent || !timerEvent)
+      throw std::runtime_error("guard_event_registration_failed");
+    wl_event_source_timer_update(timerEvent, 50);
+#ifdef COMPUTER_USE_INDEPENDENT_SEAT
+    independentSeat = std::make_unique<IndependentSeat>(h);
+#endif
+    return {"computer-use-guard",
+            "Window-scoped seat delivery for the Computer Use broker",
+            "Computer Use",
+#ifdef COMPUTER_USE_INDEPENDENT_SEAT
+            "0.3.0-independent-seat"
+#else
+            "0.2.0"
+#endif
+    };
+  } catch (...) {
+    cleanupGuard(); // never leave callbacks into a failed/unloaded plugin
+    throw;
+  }
 }
-APICALL EXPORT void PLUGIN_EXIT() {
+static void cleanupGuard() {
   clear();
+#ifdef COMPUTER_USE_INDEPENDENT_SEAT
+  independentSeat.reset();
+#endif
   while (!peers.empty())
     closePeer(*peers.begin());
   if (timerEvent)
@@ -334,5 +463,10 @@ APICALL EXPORT void PLUGIN_EXIT() {
     wl_event_source_remove(serverEvent);
   if (serverFD >= 0)
     close(serverFD);
-  unlink(socketPath.c_str());
+  timerEvent = nullptr;
+  serverEvent = nullptr;
+  serverFD = -1;
+  if (!socketPath.empty())
+    unlink(socketPath.c_str());
 }
+APICALL EXPORT void PLUGIN_EXIT() { cleanupGuard(); }

@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -40,8 +41,11 @@ type Window struct {
 	Revision string `json:"revision"`
 }
 type Desktop struct {
-	Dir  string
-	Data string
+	Dir               string
+	Data              string
+	independentSeat   atomic.Bool
+	automaticFallback atomic.Bool
+	guardInstance     atomic.Pointer[string]
 }
 
 func command(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -104,6 +108,9 @@ func (d *Desktop) guard(ctx context.Context, q map[string]any) error {
 		Error               string `json:"error"`
 		Version             int    `json:"version"`
 		FocusPreserving     bool   `json:"focus_preserving"`
+		AutomaticFallback   bool   `json:"automatic_fallback"`
+		IndependentSeat     bool   `json:"independent_seat"`
+		Instance            string `json:"instance"`
 		InputFaulted        bool   `json:"input_faulted"`
 		Locked              *bool  `json:"locked"`
 		UnicodeText         bool   `json:"unicode_text"`
@@ -112,6 +119,9 @@ func (d *Desktop) guard(ctx context.Context, q map[string]any) error {
 	}
 	if e := d.guardExchange(ctx, q, &r); e != nil {
 		return e
+	}
+	if r.Error == "application_did_not_bind_agent_seat_restart_application" {
+		r.Error = "application_did_not_bind_agent_seat: this application has no required agent-seat input resource; it may not support multiple Wayland seats, and restarting is not a guaranteed fix"
 	}
 	if q["op"] == "text_transaction" {
 		count := 0
@@ -131,7 +141,7 @@ func (d *Desktop) guard(ctx context.Context, q map[string]any) error {
 	if q["unicode_check"] == true && (!r.UnicodeText || r.TextChunkRunes != textChunkRunes) {
 		return errors.New("unicode_text_guard_unavailable: run `hyprland-computer-use setup` to update the compositor guard")
 	}
-	if q["op"] == "status" && (r.Version != 2 || !r.FocusPreserving) {
+	if q["op"] == "status" && (!r.FocusPreserving || (r.Version != 2 && !(r.Version == 3 && r.IndependentSeat && r.Instance != "")) || (r.Version == 2 && r.IndependentSeat)) {
 		return errors.New("guard_protocol_mismatch: run `hyprland-computer-use setup` to replace the loaded guard automatically")
 	}
 	if q["observation_check"] == true {
@@ -143,6 +153,8 @@ func (d *Desktop) guard(ctx context.Context, q map[string]any) error {
 		}
 	}
 	if q["op"] == "status" {
+		d.independentSeat.Store(r.IndependentSeat)
+		d.automaticFallback.Store(r.IndependentSeat && r.AutomaticFallback)
 		if r.InputFaulted {
 			return errors.New("input_restore_failed: run `hyprland-computer-use setup` to repair the compositor guard")
 		}
@@ -648,8 +660,32 @@ func (d *Desktop) guardExchange(ctx context.Context, q map[string]any, result an
 		deadline = until
 	}
 	_ = c.SetDeadline(deadline)
+	if instance := d.guardInstance.Load(); instance != nil {
+		request := make(map[string]any, len(q)+1)
+		for key, value := range q {
+			request[key] = value
+		}
+		request["instance"] = *instance
+		q = request
+	}
 	if e = json.NewEncoder(c).Encode(q); e != nil {
 		return e
 	}
-	return json.NewDecoder(io.LimitReader(c, 64<<10)).Decode(result)
+	var raw json.RawMessage
+	if e = json.NewDecoder(io.LimitReader(c, 64<<10)).Decode(&raw); e != nil {
+		return e
+	}
+	var envelope struct {
+		Instance string `json:"instance"`
+	}
+	if e = json.Unmarshal(raw, &envelope); e != nil {
+		return e
+	}
+	if envelope.Instance != "" {
+		d.guardInstance.CompareAndSwap(nil, &envelope.Instance)
+	}
+	if expected := d.guardInstance.Load(); expected != nil && envelope.Instance != *expected {
+		return errors.New("compositor_instance_changed_restart_broker")
+	}
+	return json.Unmarshal(raw, result)
 }

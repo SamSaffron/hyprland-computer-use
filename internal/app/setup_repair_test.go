@@ -51,6 +51,8 @@ type repairFixture struct {
 	stage, root, old      string
 	guard, inspector      bool
 	configured, wrongPeer bool
+	restartRequired       bool
+	missingHook           bool
 	fail, garbled         string
 }
 
@@ -79,9 +81,9 @@ func newRepairFixture(t *testing.T, activeBroker bool) *repairFixture {
 			if len(args) == 1 && args[0] == name {
 				guards := []guardLocation{}
 				if f.guard {
-					guards = append(guards, guardLocation{f.old, f.configured})
+					guards = append(guards, guardLocation{Path: f.old, Configured: f.configured, RestartRequired: f.restartRequired})
 				}
-				return json.Marshal(inspectorResult{helper, 2468, guards})
+				return json.Marshal(inspectorResult{Inspector: helper, PID: 2468, Guards: guards, IndependentSeatHookAvailable: !f.missingHook})
 			}
 			if len(args) != 3 || args[0] != "plugin" {
 				return nil, errors.New("unexpected hyprctl call")
@@ -221,6 +223,47 @@ func TestSetupRejectsHyprctlErrorWithSuccessExit(t *testing.T) {
 		t.Fatal("old guard should remain loaded")
 	}
 }
+func TestAutomaticSetupSelectsBeforeDisruption(t *testing.T) {
+	for _, available := range []bool{false, true} {
+		f := newRepairFixture(t, true)
+		f.missingHook = !available
+		selected := false
+		f.ops.selectInput = func(got bool) error {
+			if got != available || f.broker.stopped {
+				t.Fatal("selection was wrong or too late")
+			}
+			selected = true
+			return nil
+		}
+		if _, err := repairNative(context.Background(), f.stage, f.root, f.ops); err != nil || !selected {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestAutomaticSelectionFailureLeavesSessionAlone(t *testing.T) {
+	f := newRepairFixture(t, true)
+	f.ops.selectInput = func(bool) error { return errors.New("stage failed") }
+	if _, err := repairNative(context.Background(), f.stage, f.root, f.ops); err == nil {
+		t.Fatal("accepted failed staging")
+	}
+	if f.broker.stopped || !f.guard || f.inspector {
+		t.Fatal(f.events)
+	}
+}
+
+func TestSetupRefusesHotUnloadOfIndependentSeat(t *testing.T) {
+	f := newRepairFixture(t, true)
+	f.restartRequired = true
+	_, err := repairNative(context.Background(), f.stage, f.root, f.ops)
+	if err == nil || !strings.Contains(err.Error(), "restart Hyprland") {
+		t.Fatalf("unsafe replacement: %v", err)
+	}
+	if f.broker.stopped || !f.guard || f.inspector {
+		t.Fatalf("unexpected side effects: %v", f.events)
+	}
+}
+
 func TestSetupRefusesConfiguredOrWrongSessionGuard(t *testing.T) {
 	for _, configured := range []bool{false, true} {
 		f := newRepairFixture(t, true)

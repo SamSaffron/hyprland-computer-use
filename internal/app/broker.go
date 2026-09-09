@@ -49,8 +49,10 @@ type Marker struct {
 	Window    Window `json:"window"`
 	Remaining int    `json:"remaining_seconds"`
 	Label     string `json:"label"`
+	InputMode string `json:"input_mode"`
 }
 type UIState struct {
+	TrayAnchor       *TrayAnchor       `json:"tray_anchor,omitempty"`
 	OAuthEnabled     bool              `json:"oauth_enabled"`
 	OAuthPending     []OAuthPending    `json:"oauth_pending"`
 	OAuthConnections []OAuthConnection `json:"oauth_connections"`
@@ -70,6 +72,7 @@ type UIState struct {
 	Error            string            `json:"error,omitempty"`
 }
 type Broker struct {
+	trayAnchor      *TrayAnchor
 	oauth           *OAuthProvider
 	picker          *SharePicker
 	mu              sync.Mutex
@@ -291,7 +294,7 @@ func (b *Broker) disconnect(client string) {
 }
 func (b *Broker) state(err string) UIState {
 	b.mu.Lock()
-	s := UIState{Mode: b.mode, Paused: b.paused, Connected: b.uiCount > 0, Open: b.open, Now: b.now(), Requests: []Request{}, Grants: []Grant{}, Audit: append([]Audit{}, b.audit...), Recordings: []RecordingInfo{}, Backend: "Compositor-scoped input · native toplevel capture", Error: err}
+	s := UIState{TrayAnchor: b.trayAnchor, Mode: b.mode, Paused: b.paused, Connected: b.uiCount > 0, Open: b.open, Now: b.now(), Requests: []Request{}, Grants: []Grant{}, Audit: append([]Audit{}, b.audit...), Recordings: []RecordingInfo{}, Backend: "Compositor-scoped input · native toplevel capture", Error: err}
 	s.Clients = []UIClient{}
 	for id, label := range b.clients {
 		s.Clients = append(s.Clients, UIClient{id, label})
@@ -340,10 +343,29 @@ func (b *Broker) state(err string) UIState {
 	if len(wanted) > 0 && b.backend != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 		ws, e := b.backend.windows(ctx)
+		var modes struct {
+			OK    bool              `json:"ok"`
+			Modes map[string]string `json:"modes"`
+		}
+		if e == nil && b.backend.automaticFallback.Load() {
+			if err := b.backend.guardExchange(ctx, map[string]any{"op": "input_modes"}, &modes); err != nil {
+				modes.OK = false
+			}
+		}
 		cancel()
 		if e == nil {
 			for _, w := range ws {
 				if m, ok := wanted[w.ID]; ok && w.Visible {
+					m.InputMode = "Fallback"
+					if b.backend.independentSeat.Load() {
+						m.InputMode = "Seat"
+					}
+					if b.backend.automaticFallback.Load() {
+						m.InputMode = "Unknown"
+						if modes.OK && (modes.Modes[w.ID] == "Seat" || modes.Modes[w.ID] == "Fallback") {
+							m.InputMode = modes.Modes[w.ID]
+						}
+					}
 					m.Window = w
 					s.Targets = append(s.Targets, m)
 				}

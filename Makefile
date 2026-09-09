@@ -14,8 +14,12 @@ $(BIN)/hyprland-computer-use: $(GO_SOURCES) $(wildcard native/*) $(wildcard quic
 native: $(BIN)/guard.so
 $(BIN)/guard.so: native/guard.cpp native/surface_tree.hpp native/surface_routing.hpp native/input_transaction.hpp native/text_transaction.hpp native/text_keymap.hpp native/text_keyboard.hpp | $(BIN)
 	$(CXX) -std=c++23 -shared -fPIC -fno-gnu-unique $$(pkg-config --cflags hyprland libeis-1.0) $< -o $@
+.PHONY: independent-seat
+independent-seat: $(BIN)/guard-seat.so
+$(BIN)/guard-seat.so: native/guard.cpp $(wildcard native/*.hpp) | $(BIN)
+	$(CXX) -std=c++23 -shared -fPIC -fno-gnu-unique -DCOMPUTER_USE_INDEPENDENT_SEAT $$(pkg-config --cflags hyprland libeis-1.0) $< -o $@ $$(pkg-config --libs wayland-server xkbcommon)
 setup-native: native $(BIN)/header-version $(BIN)/setup-inspector.so
-$(BIN)/setup-inspector.so: native/setup_inspector.cpp | $(BIN)
+$(BIN)/setup-inspector.so: native/setup_inspector.cpp native/popup_hook.hpp | $(BIN)
 	$(CXX) -std=c++23 -shared -fPIC -fno-gnu-unique $$(pkg-config --cflags hyprland) $< -o $@
 $(BIN)/header-version: native/version.cpp | $(BIN)
 	$(CXX) $$(pkg-config --cflags hyprland) $< -o $@
@@ -29,10 +33,13 @@ fmt-check:
 	fi
 vet:
 	go vet ./...
-native-test: $(BIN)/input-transaction-test $(BIN)/text-keyboard-test $(BIN)/surface-routing-test
+native-test: $(BIN)/input-transaction-test $(BIN)/text-keyboard-test $(BIN)/surface-routing-test $(BIN)/seat-policy-test
+	$(BIN)/seat-policy-test
 	$(BIN)/input-transaction-test
 	$(BIN)/text-keyboard-test
 	$(BIN)/surface-routing-test
+$(BIN)/seat-policy-test: native/seat_policy_test.cpp native/seat_policy.hpp | $(BIN)
+	$(CXX) -std=c++23 -Wall -Wextra -Werror $< -o $@
 $(BIN)/surface-routing-test: native/surface_routing_test.cpp native/surface_routing.hpp | $(BIN)
 	$(CXX) -std=c++23 -Wall -Wextra -Werror $< -o $@
 $(BIN)/text-keyboard-test: native/text_keyboard_test.cpp native/text_keymap.hpp native/text_keyboard.hpp | $(BIN)

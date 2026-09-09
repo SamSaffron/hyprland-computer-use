@@ -1,5 +1,7 @@
 # Popups, subsurfaces and dialog transitions
 
+This page describes the **focus-borrowing fallback**. The preferred [independent-seat backend](INDEPENDENT_SEAT.md) has a different grab path and narrower, explicitly documented toolkit compatibility.
+
 This implementation expands input **inside a shared native window's surface tree**, not authority over other windows. It is source/unit tested and compiled against Hyprland 0.56.2; live toolkit validation is still required.
 
 ## What works and what does not

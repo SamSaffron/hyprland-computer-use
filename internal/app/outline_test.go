@@ -40,6 +40,15 @@ func TestOutlineDelegateStability(t *testing.T) {
 		t.Fatal("outline delegate bindings not found")
 	}
 	delegate := strings.Replace(s[start:start+end], "PanelWindow {", "QtObject {", 1)
+	markerStart := strings.Index(s, "text:target.label")
+	if markerStart < 0 {
+		t.Fatal("marker text binding not found")
+	}
+	markerEnd := strings.Index(s[markerStart:], ";color:")
+	if markerEnd < 0 {
+		t.Fatal("marker text end not found")
+	}
+	markerExpression := strings.TrimPrefix(s[markerStart:markerStart+markerEnd], "text:")
 	qml := `import QtQuick
 import Quickshell
 ShellRoot {
@@ -49,11 +58,14 @@ ShellRoot {
  property int created: 0
  property int destroyed: 0
  property int latest: 0
+ property string latestLabel: ""
  property int step: 0
  function apply(s) { ` + update + ` }
- function mark(seconds,x) { return {targets:[{window:{id:"instance-A",at:[x,0],size:[400,300]},label:"CONTROL GRANTED",remaining_seconds:seconds}]}; }
+ function mark(seconds,x,mode) { return {targets:[{window:{id:"instance-A",at:[x,0],size:[400,300]},label:"CONTROL GRANTED",input_mode:mode||"Seat",remaining_seconds:seconds}]}; }
  function check(ok,message) { if(!ok) { console.error(message); Qt.exit(1); } }
  ` + delegate + `
+  property string markerLabel: ` + markerExpression + `
+  onMarkerLabelChanged: root.latestLabel=markerLabel
   Component.onCompleted: root.created++
   Component.onDestruction: root.destroyed++
   onTargetChanged: root.latest=target.remaining_seconds
@@ -61,8 +73,8 @@ ShellRoot {
  Timer { interval:50;running:true;repeat:true;onTriggered: {
   switch(root.step++) {
   case 0: root.apply(root.mark(300,0)); break;
-  case 1: root.check(root.created===1 && root.destroyed===0,"initial creation"); root.apply(root.mark(299,0)); break;
-  case 2: root.check(root.created===1 && root.destroyed===0 && root.latest===299,"countdown recreated outline or failed to update"); root.apply(root.mark(298,20)); break;
+  case 1: root.check(root.created===1 && root.destroyed===0 && root.latestLabel.indexOf("Seat")>=0,"initial seat label"); root.apply(root.mark(299,0,"Fallback")); break;
+  case 2: root.check(root.created===1 && root.destroyed===0 && root.latest===299 && root.latestLabel.indexOf("Fallback")>=0,"fallback label or countdown recreated outline or failed to update"); root.apply(root.mark(298,20)); break;
   case 3: root.check(root.created===1 && root.destroyed===0 && root.latest===298,"geometry recreated outline"); root.apply({targets:[]}); break;
   case 4: root.check(root.destroyed===1,"revocation retained outline"); console.log("OUTLINE_STABLE"); Qt.quit(); break;
   }

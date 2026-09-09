@@ -48,13 +48,21 @@ func expectWL(c *net.UnixConn, id uint32, op uint16, want []byte) error {
 	}
 	return nil
 }
-func fakeWaylandInit(c *net.UnixConn, missing bool) error {
+func fakeWaylandInit(c *net.UnixConn, missing bool, automatic ...bool) error {
 	peer := &waylandDevices{conn: c}
+	auto := len(automatic) > 0 && automatic[0]
 	if err := expectWL(c, 1, 1, wlWords(2)); err != nil {
 		return err
 	}
 	if err := expectWL(c, 1, 0, wlWords(3)); err != nil {
 		return err
+	}
+	if auto {
+		for id := uint32(4); id <= 10; id++ {
+			if err := expectWL(c, 1, 0, wlWords(id)); err != nil {
+				return err
+			}
+		}
 	}
 	names := []string{"wl_seat", "zwp_virtual_keyboard_manager_v1", "zwlr_virtual_pointer_manager_v1"}
 	for i, name := range names {
@@ -67,6 +75,13 @@ func fakeWaylandInit(c *net.UnixConn, missing bool) error {
 			return err
 		}
 	}
+	if auto {
+		args := append(wlWords(99), wlString("wl_seat")...)
+		args = append(args, wlWords(7)...)
+		if err := peer.request(2, 0, args, nil); err != nil {
+			return err
+		}
+	}
 	if err := peer.request(3, 0, wlWords(1), nil); err != nil {
 		return err
 	}
@@ -75,6 +90,41 @@ func fakeWaylandInit(c *net.UnixConn, missing bool) error {
 	}
 	if err := peer.request(1, 1, wlWords(3), nil); err != nil {
 		return err
+	}
+	if auto {
+		for id := uint32(4); id <= 10; id++ {
+			if err := peer.request(id, 0, wlWords(1), nil); err != nil {
+				return err
+			}
+			if err := peer.request(1, 1, wlWords(id), nil); err != nil {
+				return err
+			}
+		}
+	}
+	if auto {
+		for i, global := range []uint32{10, 99} {
+			args := append(wlWords(global), wlString("wl_seat")...)
+			args = append(args, wlWords(2, uint32(11+i))...)
+			if err := expectWL(c, 2, 0, args); err != nil {
+				return err
+			}
+		}
+		if err := expectWL(c, 1, 0, wlWords(3)); err != nil {
+			return err
+		}
+		// Name replies intentionally arrive in reverse registry order.
+		if err := peer.request(12, 1, wlString("computer-use-agent"), nil); err != nil {
+			return err
+		}
+		if err := peer.request(11, 1, wlString("Hyprland"), nil); err != nil {
+			return err
+		}
+		if err := peer.request(3, 0, wlWords(1), nil); err != nil {
+			return err
+		}
+		if err := peer.request(1, 1, wlWords(3), nil); err != nil {
+			return err
+		}
 	}
 	for i, name := range names {
 		args := append(wlWords(uint32(10+i)), wlString(name)...)
@@ -154,6 +204,80 @@ func fakeWaylandInit(c *net.UnixConn, missing bool) error {
 	}
 	return peer.request(9, 0, wlWords(2), nil)
 }
+func TestWaylandWatcherRequiresMatchingGuardPeer(t *testing.T) {
+	client, _ := waylandPair(t)
+	d := &waylandDevices{conn: client}
+	dir, err := os.MkdirTemp("", "cu-peer-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	if d.requireGuardPeer(dir) == nil {
+		t.Fatal("missing guard accepted")
+	}
+	l, err := net.Listen("unix", dir+"/guard.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if err = d.requireGuardPeer(dir); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWaylandWatcherDoesNotBindDevicesAndDetectsDisconnect(t *testing.T) {
+	client, server := waylandPair(t)
+	finished := make(chan error, 1)
+	go func() {
+		defer server.Close()
+		if err := expectWL(server, 1, 1, wlWords(2)); err != nil {
+			finished <- err
+			return
+		}
+		if err := expectWL(server, 1, 0, wlWords(3)); err != nil {
+			finished <- err
+			return
+		}
+		peer := &waylandDevices{conn: server}
+		for _, id := range []uint32{10, 11} {
+			args := append(wlWords(id), wlString("wl_seat")...)
+			args = append(args, wlWords(7)...)
+			if err := peer.request(2, 0, args, nil); err != nil {
+				finished <- err
+				return
+			}
+		}
+		if err := peer.request(3, 0, wlWords(1), nil); err != nil {
+			finished <- err
+			return
+		}
+		server.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		var b [1]byte
+		n, err := server.Read(b[:])
+		if n != 0 || !errors.Is(err, os.ErrDeadlineExceeded) {
+			finished <- fmt.Errorf("watcher sent additional request or closed early: %d %v", n, err)
+			return
+		}
+		finished <- nil
+	}()
+	d, err := initWaylandConnection(context.Background(), client, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-d.done:
+		if err == nil {
+			t.Fatal("disconnect not reported")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("watcher outlived compositor")
+	}
+}
+
 func TestWaylandDevicesLifecycle(t *testing.T) {
 	client, server := waylandPair(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -361,5 +485,22 @@ func TestKeyboardCLIValidation(t *testing.T) {
 	}
 	if _, err := startWaylandDevices(context.Background()); err == nil || !strings.Contains(err.Error(), "XDG_RUNTIME_DIR") {
 		t.Fatal(err)
+	}
+}
+
+func TestAutomaticDevicesSelectNamedNativeSeat(t *testing.T) {
+	client, server := waylandPair(t)
+	done := make(chan error, 1)
+	go func() { done <- fakeWaylandInit(server, false, true) }()
+	devices, err := initWaylandConnection(context.Background(), client, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devices.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if devices.globals["wl_seat"] != 10 {
+		t.Fatal("bound agent seat instead of native seat")
 	}
 }

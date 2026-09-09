@@ -179,15 +179,30 @@ func run() error {
 		}
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		d := &Desktop{dir, *data}
+		d := &Desktop{Dir: dir, Data: *data}
 		if e = d.guard(ctx, map[string]any{"op": "status"}); e != nil {
 			return guardStartupError(e)
 		}
-		devices, e := startWaylandDevices(ctx)
+		var devices *waylandDevices
+		if d.automaticFallback.Load() {
+			devices, e = startAutomaticDevices(ctx, dir)
+			fmt.Fprintln(os.Stderr, "Automatic input: independent seat preferred; guarded focus borrowing available for unsupported clients.")
+		} else if !d.independentSeat.Load() {
+			devices, e = startWaylandDevices(ctx)
+		} else {
+			devices, e = startWaylandWatcher(ctx)
+			fmt.Fprintln(os.Stderr, "Independent-seat input enabled; no native-seat virtual devices created.")
+		}
 		if e != nil {
-			return fmt.Errorf("keyboard/pointer initialization failed: %w", e)
+			return fmt.Errorf("Wayland connection initialization failed: %w", e)
 		}
 		defer devices.Close()
+		if d.independentSeat.Load() {
+			if e = devices.requireGuardPeer(dir); e != nil {
+				return e
+			}
+		}
+		deviceDone := devices.done
 		ui, e := listenUnix(filepath.Join(dir, "ui.sock"))
 		if e != nil {
 			return e
@@ -250,12 +265,12 @@ func run() error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case err := <-devices.done:
+		case err := <-deviceDone:
 			if ctx.Err() != nil {
 				return nil
 			}
 			cancel()
-			return fmt.Errorf("keyboard/pointer connection lost; stopping broker: %w", err)
+			return fmt.Errorf("Wayland connection lost; stopping broker: %w", err)
 		}
 	default:
 		return errors.New("unknown command")

@@ -6,7 +6,7 @@
 
 - **Window metadata is free:** IDs, titles, app, workspace, geometry and revisions. Listing does not grant access to pixels or input; it works even while paused. Titles can contain sensitive document names—this is an intentional usability trade-off.
 - **Approve** is the startup default. An MCP request creates a local approval card, not authority.
-- Grant **observation of workspace 1**, or **control of one window**, for a duration you choose (1–60 minutes in the UI).
+- Grant **observation of workspace 1**, or **control of one window**, for a duration you choose: **1, 5, 10, 15, 30 minutes, 1 hour, or Custom…** (whole minutes from 1–60). The initial default is 5 minutes. The console remembers your last valid choice, including a custom value, across restarts in `$XDG_CONFIG_HOME/hyprland-computer-use/console.ini` (normally `~/.config/hyprland-computer-use/console.ini`). Only the duration preference is saved—not grants, approve/YOLO mode, or pause state. Invalid custom input disables Share/Grant without blocking Deny or Revoke.
 - Observation of a workspace explicitly includes newly opened windows while they remain on that workspace. Window control never inherits to another toplevel.
 - Active grants show a countdown, a target-window outline, and a revoke button.
 - **YOLO** is a deliberate, two-click local selection. It skips approval prompts for the exposed tools; it does not bypass pause, supervisor liveness, validation, or compositor targeting.

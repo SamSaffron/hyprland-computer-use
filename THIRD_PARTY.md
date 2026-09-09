@@ -13,6 +13,8 @@ The keyboard/pointer lifecycle is implemented in Go using `golang.org/x/sys/unix
 
 The compositor guard includes Hyprland's input-capture API to refuse borrowed input during an active capture. Building that header requires the `libeis-1.0` pkg-config include flags (Arch package `libei`); the Go binary does not link libei.
 
+The preferred `guard-seat.so` variant links libwayland-server and libxkbcommon, constructs its fixed US keymap from the installed XKB data, and uses its own protocol seat. It does not change the Go executable's linking. See `docs/INDEPENDENT_SEAT.md` for automatic setup and compatibility limits.
+
 ## Release tooling
 
 The release helper and its test (`scripts/release.sh`, `scripts/release_test.go`) are adapted from [term-llm](https://github.com/samsaffron/term-llm). The installer and GoReleaser workflow follow the same release pattern. The upstream MIT notice is retained below:

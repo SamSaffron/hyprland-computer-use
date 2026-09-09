@@ -13,7 +13,7 @@ func TestConsoleBundle(t *testing.T) {
 	if err := extractConsole(dir); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"shell.qml", "Picker.qml"} {
+	for _, name := range []string{"shell.qml", "Picker.qml", "TrayPlacement.qml", "DurationPicker.qml"} {
 		want, err := os.ReadFile(filepath.Join("..", "..", "quickshell", name))
 		if err != nil {
 			t.Fatal(err)

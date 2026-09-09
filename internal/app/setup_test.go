@@ -15,7 +15,7 @@ func TestNativeBundleExtraction(t *testing.T) {
 	if err := extractNative(dir); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"Makefile", "LICENSE", "THIRD_PARTY.md", "native/guard.cpp", "native/input_transaction.hpp", "native/surface_routing.hpp", "native/surface_tree.hpp", "native/text_transaction.hpp", "native/text_keymap.hpp", "native/text_keyboard.hpp", "native/setup_inspector.cpp", "native/version.cpp", "native/virtual-keyboard-unstable-v1.xml", "native/wlr-virtual-pointer-unstable-v1.xml"} {
+	for _, path := range []string{"Makefile", "LICENSE", "THIRD_PARTY.md", "native/guard.cpp", "native/independent_seat.hpp", "native/seat_policy.hpp", "native/input_transaction.hpp", "native/surface_routing.hpp", "native/surface_tree.hpp", "native/text_transaction.hpp", "native/text_keymap.hpp", "native/text_keyboard.hpp", "native/setup_inspector.cpp", "native/version.cpp", "native/virtual-keyboard-unstable-v1.xml", "native/wlr-virtual-pointer-unstable-v1.xml"} {
 		want, err := os.ReadFile(filepath.Join("..", "..", path))
 		if err != nil {
 			t.Fatal(err)
@@ -104,6 +104,44 @@ func TestSetupBuildAndFailurePreservesCurrent(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(first, "build", "guard.so")); err != nil {
 		t.Fatal("old plugin build removed", err)
+	}
+}
+
+func TestAutomaticSetupStagesIndependentVariant(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("setup rejects root")
+	}
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	tools := t.TempDir()
+	for _, tool := range []string{"g++", "pkg-config"} {
+		if err := os.WriteFile(filepath.Join(tools, tool), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	script := "#!/bin/sh\n/bin/mkdir -p build\ncase $1 in\nsetup-native) printf legacy > build/guard.so;;\nindependent-seat) [ -z \"$FAIL_SEAT\" ] || exit 2; printf independent > build/guard-seat.so;;\n*) exit 1;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(tools, "make"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tools)
+	for _, tc := range []struct{ name, mode, fail, want string }{
+		{"preferred", "auto", "", "independent"},
+		{"build unavailable", "auto", "1", "legacy"},
+		{"explicit fallback", "focus-borrowing", "", "legacy"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("FAIL_SEAT", tc.fail)
+			if err := runSetup([]string{"--build-only", "--input-mode=" + tc.mode}); err != nil {
+				t.Fatal(err)
+			}
+			root, err := nativeInstallRoot()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(filepath.Join(root, "current", "build", "guard.so"))
+			if err != nil || string(got) != tc.want {
+				t.Fatalf("wrong staged guard: %q %v", got, err)
+			}
+		})
 	}
 }
 

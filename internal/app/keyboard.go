@@ -23,10 +23,12 @@ import (
 // The wire protocol is native endian, 32-bit aligned, with SCM_RIGHTS for the
 // keymap fd. No bound object has events containing file descriptors.
 type waylandDevices struct {
-	conn    *net.UnixConn
-	done    chan error
-	stop    func() bool
-	globals map[string]uint32
+	conn          *net.UnixConn
+	done          chan error
+	stop          func() bool
+	globals       map[string]uint32
+	watchOnly     bool
+	seatDiscovery map[uint32]uint32
 }
 
 func dialWayland(ctx context.Context) (*net.UnixConn, error) {
@@ -79,8 +81,52 @@ func startWaylandDevices(ctx context.Context) (*waylandDevices, error) {
 	}
 	return initWaylandDevices(ctx, conn)
 }
+
+func startAutomaticDevices(ctx context.Context, dir string) (*waylandDevices, error) {
+	conn, err := dialWayland(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Verify the peer before creating anything on the native seat.
+	if err = (&waylandDevices{conn: conn}).requireGuardPeer(dir); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return initWaylandConnection(ctx, conn, false, true)
+}
+
+// A registry-only connection pins broker lifetime to this compositor. It binds
+// no seat/device, and prevents old grants surviving a compositor restart.
+func startWaylandWatcher(ctx context.Context) (*waylandDevices, error) {
+	conn, err := dialWayland(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return initWaylandConnection(ctx, conn, true)
+}
+func (d *waylandDevices) requireGuardPeer(dir string) error {
+	wayland, err := peerCredentials(d.conn)
+	if err != nil {
+		return err
+	}
+	guard, err := socketPeer(filepath.Join(dir, "guard.sock"))
+	if err != nil {
+		return err
+	}
+	if guard == nil || wayland.Pid != guard.Pid || wayland.Uid != guard.Uid || wayland.Uid != uint32(os.Getuid()) {
+		return errors.New("Wayland display and compositor guard must belong to the same desktop process")
+	}
+	return nil
+}
+
 func initWaylandDevices(ctx context.Context, conn *net.UnixConn) (*waylandDevices, error) {
-	d := &waylandDevices{conn: conn, done: make(chan error, 1), globals: map[string]uint32{}}
+	return initWaylandConnection(ctx, conn, false)
+}
+func initWaylandConnection(ctx context.Context, conn *net.UnixConn, watchOnly bool, automatic ...bool) (*waylandDevices, error) {
+	d := &waylandDevices{conn: conn, done: make(chan error, 1), globals: map[string]uint32{}, watchOnly: watchOnly}
+	if len(automatic) > 0 && automatic[0] {
+		d.seatDiscovery = map[uint32]uint32{}
+	}
 	d.stop = context.AfterFunc(ctx, func() { _ = conn.Close() })
 	success := false
 	defer func() {
@@ -92,32 +138,52 @@ func initWaylandDevices(ctx context.Context, conn *net.UnixConn) (*waylandDevice
 	if err := d.request(1, 1, wlWords(2), nil); err != nil {
 		return nil, err
 	} // display.get_registry
+	if d.seatDiscovery != nil {
+		// Wayland new IDs must be contiguous. Reserve then release the fixed
+		// device IDs before allocating temporary seat discovery objects.
+		for id := uint32(3); id <= 10; id++ {
+			if err := d.request(1, 0, wlWords(id), nil); err != nil {
+				return nil, err
+			}
+		}
+		for {
+			id, err := d.event()
+			if err != nil {
+				return nil, err
+			}
+			if id == 10 {
+				break
+			}
+		}
+	}
 	if err := d.sync(3); err != nil {
 		return nil, err
 	}
-	for i, name := range []string{"wl_seat", "zwp_virtual_keyboard_manager_v1", "zwlr_virtual_pointer_manager_v1"} {
-		global, ok := d.globals[name]
-		if !ok {
-			return nil, fmt.Errorf("required Wayland interface %s unavailable; no global input fallback", name)
+	if !watchOnly {
+		for i, name := range []string{"wl_seat", "zwp_virtual_keyboard_manager_v1", "zwlr_virtual_pointer_manager_v1"} {
+			global, ok := d.globals[name]
+			if !ok {
+				return nil, fmt.Errorf("required Wayland interface %s unavailable; no global input fallback", name)
+			}
+			args := append(wlWords(global), wlString(name)...)
+			args = append(args, wlWords(1, uint32(4+i))...)
+			if err := d.request(2, 0, args, nil); err != nil {
+				return nil, err
+			}
 		}
-		args := append(wlWords(global), wlString(name)...)
-		args = append(args, wlWords(1, uint32(4+i))...)
-		if err := d.request(2, 0, args, nil); err != nil {
+		if err := d.request(6, 0, wlWords(4, 7), nil); err != nil {
+			return nil, err
+		} // create_virtual_pointer
+		if err := d.request(5, 0, wlWords(4, 8), nil); err != nil {
+			return nil, err
+		} // create_virtual_keyboard
+		if err := d.sendKeymap(); err != nil {
 			return nil, err
 		}
+		if err := d.sync(9); err != nil {
+			return nil, err
+		} // ready only after compositor processed the keymap
 	}
-	if err := d.request(6, 0, wlWords(4, 7), nil); err != nil {
-		return nil, err
-	} // create_virtual_pointer
-	if err := d.request(5, 0, wlWords(4, 8), nil); err != nil {
-		return nil, err
-	} // create_virtual_keyboard
-	if err := d.sendKeymap(); err != nil {
-		return nil, err
-	}
-	if err := d.sync(9); err != nil {
-		return nil, err
-	} // ready only after compositor processed the keymap
 	_ = conn.SetDeadline(time.Time{})
 	success = true
 	go func() {
@@ -232,8 +298,8 @@ func (d *waylandDevices) event() (uint32, error) {
 			break
 		}
 		return 0, fmt.Errorf("Wayland protocol error on object %d (code %d): %s", word(), binary.NativeEndian.Uint32(args[4:]), message)
-	case id == 1 && op == 1 && len(args) == 4: // delete_id: our two one-shot callbacks only
-		if word() == 3 || word() == 9 {
+	case id == 1 && op == 1 && len(args) == 4: // delete_id: device readiness and discovery callbacks
+		if word() == 3 || word() == 9 || (d.seatDiscovery != nil && word() >= 4 && word() <= 10) {
 			return 0, nil
 		}
 	case id == 2 && op == 0: // registry.global
@@ -243,6 +309,22 @@ func (d *waylandDevices) event() (uint32, error) {
 		name, rest, err := takeWLString(args[4:])
 		if err != nil || len(rest) != 4 {
 			break
+		}
+		if d.watchOnly {
+			return 0, nil
+		}
+		if name == "wl_seat" && d.seatDiscovery != nil {
+			if binary.NativeEndian.Uint32(rest) < 2 {
+				return 0, errors.New("seat name unavailable")
+			}
+			if len(d.seatDiscovery) >= 64 {
+				return 0, errors.New("too many Wayland seats")
+			}
+			object := uint32(11 + len(d.seatDiscovery))
+			d.seatDiscovery[object] = word()
+			bind := append(wlWords(word()), wlString(name)...)
+			bind = append(bind, wlWords(2, object)...)
+			return 0, d.request(2, 0, bind, nil)
 		}
 		if name == "wl_seat" || name == "zwp_virtual_keyboard_manager_v1" || name == "zwlr_virtual_pointer_manager_v1" {
 			if binary.NativeEndian.Uint32(rest) < 1 {
@@ -261,9 +343,28 @@ func (d *waylandDevices) event() (uint32, error) {
 			}
 		}
 		return 0, nil
+	case d.seatDiscovery != nil && d.seatDiscovery[id] != 0:
+		if op == 0 && len(args) == 4 {
+			return 0, nil
+		}
+		if op == 1 {
+			name, rest, err := takeWLString(args)
+			if err != nil || len(rest) != 0 {
+				break
+			}
+			if name == "Hyprland" {
+				if _, exists := d.globals["wl_seat"]; exists {
+					return 0, errors.New("multiple native Hyprland seats")
+				}
+				d.globals["wl_seat"] = d.seatDiscovery[id]
+			}
+			return 0, nil
+		}
+	case d.seatDiscovery != nil && id >= 3 && id <= 10 && op == 0 && len(args) == 4:
+		return id, nil
 	case id == 4 && op == 0 && len(args) == 4: // wl_seat v1 capabilities
 		return 0, nil
-	case (id == 3 || id == 9) && op == 0 && len(args) == 4:
+	case (id == 3 || id == 9 || id == 10) && op == 0 && len(args) == 4:
 		return id, nil
 	}
 	return 0, fmt.Errorf("unexpected or malformed Wayland event %d/%d", id, op)

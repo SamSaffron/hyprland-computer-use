@@ -1,5 +1,6 @@
 // Temporary, read-only setup helper. Hyprland 0.56.2's plugin list omits
 // filenames, so inspect the actual plugin objects instead of guessing paths.
+#include "popup_hook.hpp"
 #include <filesystem>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/plugins/PluginSystem.hpp>
@@ -27,10 +28,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE h) {
                   if (p->m_name == "computer-use-guard" &&
                       p->m_author == "Computer Use")
                     guards.push_back({{"path", p->m_path},
-                                      {"configured", p->m_loadedWithConfig}});
+                                      {"configured", p->m_loadedWithConfig},
+                                      {"restart_required", p->m_version.ends_with("-independent-seat")}});
                 }
                 return nlohmann::json{
-                    {"inspector", path}, {"pid", getpid()}, {"guards", guards}}
+                    {"inspector", path}, {"pid", getpid()}, {"guards", guards},
+                    {"independent_seat_hook_available", independentPopupGrabAddress() != nullptr}}
                     .dump();
               }}))
     throw std::runtime_error("setup inspector command registration failed");

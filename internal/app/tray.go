@@ -18,14 +18,22 @@ type tray struct {
 	b              *Broker
 	ctx            context.Context
 	launch         func(context.Context) error
+	position       func(context.Context, int32, int32) *TrayAnchor
 	mu             sync.Mutex
 	consoleRunning bool
 	consoleDone    chan struct{}
 }
 
 func (t *tray) Activate(x, y int32) *dbus.Error {
+	var anchor *TrayAnchor
+	if t.position != nil {
+		ctx, cancel := context.WithTimeout(t.ctx, 300*time.Millisecond)
+		anchor = t.position(ctx, x, y)
+		cancel()
+	}
 	t.b.mu.Lock()
 	t.b.open++
+	t.b.trayAnchor = anchor
 	connected := t.b.uiCount > 0
 	t.b.mu.Unlock()
 	if connected {
@@ -80,7 +88,7 @@ func (b *Broker) runTray(ctx context.Context) {
 	}
 	path := dbus.ObjectPath("/StatusNotifierItem")
 	consoleCtx, cancelConsole := context.WithCancel(ctx)
-	item := &tray{b: b, ctx: consoleCtx, launch: runConsoleContext}
+	item := &tray{b: b, ctx: consoleCtx, launch: runConsoleContext, position: trayAnchor}
 	defer func() {
 		cancelConsole()
 		item.mu.Lock()

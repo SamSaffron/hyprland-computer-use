@@ -56,10 +56,18 @@ const nativeDependencies = "Install native build dependencies first. On Arch:\n 
 
 func runSetup(args []string) error {
 	f := flag.NewFlagSet("setup", flag.ContinueOnError)
+	inputMode := f.String("input-mode", "auto", "auto (prefer independent seat) or focus-borrowing")
+	legacySeat := f.Bool("experimental-seat", false, "deprecated alias for --input-mode=auto")
 	buildOnly := f.Bool("build-only", false, "build/install without touching the compositor or broker")
 	load := f.Bool("load", true, "load/repair the plugin (default; --load=false is a legacy alias for --build-only)")
 	if err := f.Parse(args); err != nil {
 		return err
+	}
+	if *legacySeat {
+		*inputMode = "auto"
+	}
+	if *inputMode != "auto" && *inputMode != "focus-borrowing" {
+		return errors.New("input-mode must be auto or focus-borrowing")
 	}
 	if f.NArg() != 0 {
 		return errors.New("unexpected setup arguments")
@@ -118,13 +126,38 @@ func runSetup(args []string) error {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "Building bundled compositor components...")
-	cmd := exec.CommandContext(ctx, "make", "setup-native", "--silent")
-	cmd.Dir = stage
-	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
-	if err = cmd.Run(); err != nil {
-		return fmt.Errorf("native build failed: %w\n%s\nIf Hyprland's API changed, this release may not support it; no global input fallback is available", err, nativeDependencies)
+	build := func(target string) error {
+		cmd := exec.CommandContext(ctx, "make", target, "--silent")
+		cmd.Dir = stage
+		cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+		return cmd.Run()
+	}
+	if err = build("setup-native"); err != nil {
+		return fmt.Errorf("native build failed: %w\n%s", err, nativeDependencies)
+	}
+	preferSeat := false
+	if *inputMode == "auto" {
+		if err = build("independent-seat"); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			fmt.Fprintln(os.Stderr, "Independent seat build unavailable; using guarded focus borrowing:", err)
+		} else {
+			preferSeat = true
+		}
 	}
 	plugin := filepath.Join(stage, "build", "guard.so")
+	selectPlugin := func(available bool) error {
+		if preferSeat && available {
+			if err := os.Rename(filepath.Join(stage, "build", "guard-seat.so"), plugin); err != nil {
+				return err
+			}
+			fmt.Fprintln(os.Stderr, "Automatic input: independent seat preferred, guarded focus borrowing for unsupported clients. Plugin updates require a Hyprland restart; never hot-unload.")
+		} else {
+			fmt.Fprintln(os.Stderr, "Using guarded focus borrowing; independent seat unavailable or disabled.")
+		}
+		return nil
+	}
 	loaded, restarted := !*buildOnly && *load, false
 	if loaded {
 		header, err := command(ctx, filepath.Join(stage, "build", "header-version"))
@@ -140,12 +173,19 @@ func runSetup(args []string) error {
 		}
 		// Once loading is attempted, never delete a file that might still be mapped.
 		keep = true
-		restarted, err = repairNative(ctx, stage, root, localRepairOps(dir, stage, root))
+		ops := localRepairOps(dir, stage, root)
+		ops.selectInput = selectPlugin
+		restarted, err = repairNative(ctx, stage, root, ops)
 		if err != nil {
 			return fmt.Errorf("%w\nBuild retained at %s", err, stage)
 		}
-	} else if err = publishNative(stage, root); err != nil {
-		return err
+	} else {
+		if err = selectPlugin(true); err != nil {
+			return err
+		}
+		if err = publishNative(stage, root); err != nil {
+			return err
+		}
 	}
 	keep = true
 	printSetupNextSteps(os.Stderr, plugin, loaded, restarted)

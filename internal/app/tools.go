@@ -49,7 +49,17 @@ func (b *Broker) newMCPServer(id string, opts *mcp.ServerOptions) *mcp.Server {
 				rs = append(rs, *r)
 			}
 		}
-		return map[string]any{"mode": b.mode, "paused": b.paused, "supervisor_connected": b.uiCount > 0, "client_id": id, "grants": gs, "requests": rs, "limitations": []string{"native Wayland windows only", "surface-tree input; active grabs and cross-surface drags refused", "Unicode text via target-client keymaps; toolkit behavior needs live validation", "no privilege broker"}}, nil
+		inputMode := "focus-borrowing"
+		limitations := []string{"native Wayland windows only", "surface-tree input; active grabs and cross-surface drags refused", "Unicode text via target-client keymaps; toolkit behavior needs live validation", "no privilege broker"}
+		if b.backend != nil && b.backend.independentSeat.Load() {
+			inputMode = "independent-seat"
+			limitations = []string{"native Wayland windows only; separate application processes recommended", "Kitty 0.48.2 binds only the first seat and is unsupported; GNOME Terminal typing was tested", "in terminals, send one command and Enter at a time, then observe its output; multiline bursts can garble terminal echo", "agent popup grabs require a valid agent-seat serial; GTK3 default-seat serials are refused", "same-process menus can drop human input; IME, clipboard and DnD are not independently integrated", "app-created windows may still change desktop activation", "popup pixels are not guaranteed in toplevel capture; observe contents before targeting", "cross-surface drags refused; no global fallback or privilege broker"}
+		}
+		if b.backend != nil && b.backend.automaticFallback.Load() {
+			inputMode = "automatic"
+			limitations[1] = "independent seat preferred; clients without both seat devices use guarded focus borrowing (temporary native focus transitions, idle input required)"
+		}
+		return map[string]any{"mode": b.mode, "input_mode": inputMode, "paused": b.paused, "supervisor_connected": b.uiCount > 0, "client_id": id, "grants": gs, "requests": rs, "limitations": limitations}, nil
 	})
 	type PermissionArgs struct {
 		Capability string `json:"capability" jsonschema:"observe, control, record, or launch"`

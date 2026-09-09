@@ -22,23 +22,26 @@ type loadedPlugin struct {
 	Author string `json:"author"`
 }
 type guardLocation struct {
-	Path       string `json:"path"`
-	Configured bool   `json:"configured"`
+	Path            string `json:"path"`
+	Configured      bool   `json:"configured"`
+	RestartRequired bool   `json:"restart_required"`
 }
 type inspectorResult struct {
-	Inspector string          `json:"inspector"`
-	PID       int             `json:"pid"`
-	Guards    []guardLocation `json:"guards"`
+	Inspector                    string          `json:"inspector"`
+	PID                          int             `json:"pid"`
+	Guards                       []guardLocation `json:"guards"`
+	IndependentSeatHookAvailable bool            `json:"independent_seat_hook_available"`
 }
 
 // Injectable boundaries keep repair tests entirely off the real desktop.
 type repairOps struct {
-	call    func(context.Context, ...string) ([]byte, error)
-	broker  func() (repairBroker, error)
-	peer    func() (int, error)
-	lock    func() (io.Closer, error)
-	status  func(context.Context) error
-	publish func() error
+	selectInput func(bool) error
+	call        func(context.Context, ...string) ([]byte, error)
+	broker      func() (repairBroker, error)
+	peer        func() (int, error)
+	lock        func() (io.Closer, error)
+	status      func(context.Context) error
+	publish     func() error
 }
 
 func localRepairOps(dir, stage, root string) repairOps {
@@ -145,6 +148,9 @@ func inspectGuard(ctx context.Context, stage string, ops repairOps) (result insp
 		if g.Path == "" || g.Path == path {
 			return result, errors.New("invalid loaded guard path")
 		}
+		if g.RestartRequired {
+			return result, errors.New("independent seat is loaded: save your work and restart Hyprland before updating or rolling back; do not hot-unload this plugin")
+		}
 		if g.Configured {
 			return result, errors.New("guard is loaded from Hyprland configuration; remove that plugin entry before setup (setup will not edit your compositor config)")
 		}
@@ -161,6 +167,11 @@ func repairNative(ctx context.Context, stage, root string, ops repairOps) (resta
 	existing, err := inspectGuard(ctx, stage, ops)
 	if err != nil {
 		return false, err
+	}
+	if ops.selectInput != nil {
+		if err := ops.selectInput(existing.IndependentSeatHookAvailable); err != nil {
+			return false, err
+		}
 	}
 	peer, err := ops.peer()
 	if err != nil {

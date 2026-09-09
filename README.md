@@ -2,7 +2,7 @@
 
 Let an MCP agent view and control **windows you approve**, with a local Quickshell permission console and tray icon. Access starts denied; you choose the windows and duration, and can pause or revoke it.
 
-**Experimental.** Tested against Hyprland **0.56.2**; the plugin requires headers matching your exact running build. Use disposable windows first. Input supports native Wayland toplevels, with target-scoped Unicode/bulk text implemented but not yet live-validated; not XWayland. Focus-preserving input and automatic live plugin replacement still need live testing. **Sharing a terminal gives shell authority—this is not a sandbox.**
+Tested against Hyprland **0.56.2**; the plugin requires headers matching your exact running build. Input supports native Wayland windows, not XWayland, and prefers a separate input seat with guarded focus borrowing for clients such as Kitty. Application coverage is limited; use disposable windows first. Seat-owning plugin updates require a Hyprland restart. **Sharing a terminal gives shell authority—this is not a sandbox.**
 
 ## Quick start
 
@@ -65,11 +65,17 @@ Ask the agent to list windows and request access. Approve in the local console, 
 
 ## Update or stop
 
-- **Update:** rerun the installer (or replace a source-built executable), then run `hyprland-computer-use setup`. It replaces the guard and restarts an existing broker. Skip `serve` if setup reports a restart. Grants reset; reconnect your MCP client.
+- **Update:** rerun the installer (or replace a source-built executable), then run `hyprland-computer-use setup`. It replaces a safely unloadable guard and restarts an existing broker. If the independent seat is loaded, save work and restart Hyprland first. Skip `serve` if setup reports a restart. Grants reset; reconnect your MCP client.
 - **Stop:** run `hyprland-computer-use stop`, or press Ctrl+C in the broker terminal.
 - **Offline build:** `hyprland-computer-use setup --build-only` does not touch the compositor or broker.
 
 No autostart service or compositor-config edit is installed. Service/config-managed installations require their own update procedure.
+
+## Automatic input backend
+
+Setup prefers the independent seat and falls back to the compositor-guarded focus-borrowing build when the seat build or required hook is unavailable. During execution, clients with both agent-seat devices use **Seat**; other clients use **Fallback**, under the same window grant. The green grant outline shows the selected path. Fallback temporarily borrows native protocol focus and requires idle human input; it is not independent input.
+
+**Once the independent-seat plugin is loaded, updating or rolling back requires a Hyprland restart—do not hot-unload it.** Setup refuses unsafe replacement and does not restart your desktop. See [automatic input and compatibility](docs/INDEPENDENT_SEAT.md) for limitations and tested cases.
 
 ## Go deeper
 
