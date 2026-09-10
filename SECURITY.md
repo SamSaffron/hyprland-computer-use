@@ -47,6 +47,24 @@ Hot unload with connected clients is unsupported. Setup compares the requested g
 - Unicode text is delivered in bounded chunks of at most 48 scalars. Text-bearing keymaps are sealed and sent only to the target client's keyboard resources, never installed as a global seat/device map. The prior map is explicitly restored, including same-device transactions. Counts acknowledge protocol delivery, not application insertion; an already admitted chunk cannot be recalled. No clipboard access is used. Same-client application behavior remains trusted.
 - Keyboard/mouse transactions do not invoke desktop activation or cursor warping. An explicitly requested `focus` action intentionally changes desktop activation. In the focus-borrowing fallback, held user input, grabs, constraints and drag-and-drop are conservatively refused rather than silently falling back. A restoration fault disables further guard input until reload.
 
+## Pointer extensions and cropped observation
+
+Modifiers and multiclick/waypoint gestures remain complete bounded compositor
+transactions on one authorized surface. The guard validates modifiers, counts,
+units and every planned path point before delivery. Cleanup attempts both button
+release and modifier release on exceptions; uncertain cleanup faults input.
+No held mouse/key state spans broker requests. New pointer features require a
+versioned guard capability before any batch input, including earlier key/text
+actions. Unsupported/old guards never silently degrade these gestures.
+
+Crop/zoom reads the actual approved toplevel, not the desktop. It samples a
+window-local logical region from the captured buffer with HiDPI-aware mapping.
+Final permission/geometry/workspace checks still gate pixel release. Full-buffer
+decoding for crop/resampling is bounded to 8192 pixels per edge and 16 Mi pixels;
+encoded transport is bounded to 16 MiB. Region boundaries are not an additional
+within-window security boundary, and sampled lock checks remain non-atomic.
+See [API details and limitations](docs/POINTER_CAPTURE.md).
+
 ## What this does not claim
 
 - **Same-user isolation.** A same-UID process can access private runtime sockets; a shell controlled through a terminal can transitively gain that authority. A controlled application may also spawn programs, access files or the network, and use previously cached credentials. The UI explicitly warns for common terminal classes, but class detection is not a sandbox.

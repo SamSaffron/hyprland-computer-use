@@ -1,5 +1,9 @@
 # Testing
 
+Pointer/capture extensions have a [dated real term-llm red/green comparison and
+Seat/Fallback regression report](POINTER_CAPTURE_TESTING.md). Its GTK raw-motion
+fixture requirement is explicit; it does not expand arbitrary-app drag guarantees.
+
 Use **Go 1.26.6 or newer**. Install development dependencies from
 [Contributing](../CONTRIBUTING.md); exact native targets and supported cases live
 in the [compatibility table](COMPATIBILITY.md), not in dated run logs.

@@ -86,6 +86,28 @@ static SurfacePath planSurfacePath(const std::vector<SurfaceNode> &nodes,
   return result;
 }
 
+// Each segment uses the same bounded hit-testing as the legacy straight drag.
+// Reject ALL segments before entering a surface or pressing a button.
+template <typename Hit>
+static SurfacePath
+planSurfacePolyline(const std::vector<SurfaceNode> &nodes, Vector2D size,
+                    const std::vector<Vector2D> &points, Hit hit) {
+  if (points.size() < 2 || points.size() > 64)
+    throw std::runtime_error("invalid_drag_path_size");
+  SurfacePath result;
+  for (size_t i = 1; i < points.size(); ++i) {
+    auto segment =
+        planSurfacePath(nodes, size, points[i - 1], points[i], true, hit);
+    if (result.surface && result.surface != segment.surface)
+      throw std::runtime_error("cross_surface_drag_unsupported");
+    result.surface = segment.surface;
+    result.points.insert(result.points.end(),
+                         segment.points.begin() + (i > 1 ? 1 : 0),
+                         segment.points.end());
+  }
+  return result;
+}
+
 struct SurfaceHandle {
   WP<CWLSurfaceResource> root, surface;
 };

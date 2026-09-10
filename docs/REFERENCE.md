@@ -40,7 +40,7 @@ set, the broker denies further permissioned activity and retries cleanup; see
 | `list_windows` | Free metadata discovery; optional workspace filter, no pixels |
 | `window_state` | Surface-object IDs/geometry and declared transient toplevel relationships; metadata only |
 | `view_window` | PNG of the actual toplevel, plus its geometry revision |
-| `input_window` | Focus, move, click, drag, scroll, key chords, text; max 128 actions |
+| `input_window` | Focus, move, modifier-assisted/multi-click, waypoint drag, two-axis scroll, key chords, text; max 128 actions |
 | `record_window` | Separately approved, window-only local MP4 recording |
 | `stop_recording` | Stop a recording owned by this MCP client |
 | `list_recordings` | This client's recording status and local output paths |
@@ -78,11 +78,11 @@ Coordinates are **window-local logical pixels**, not scaled screenshot pixels. `
 - `frame_id`: SHA-256 of the encoded PNG; equal encoded content has the same ID, even across captures. It is **not an accepted input precondition**, an accessibility snapshot, or evidence the app is still unchanged.
 - `captured_at`: UTC broker timestamp after capture and its safety checks, not the compositor's presentation timestamp.
 
-For `view_window` only, optional `max_width` may be 0 (default 1280) through 1920; negative values are rejected. `input_window` has no capture-size argument because input coordinates are always logical window coordinates, and its optional post-action screenshot uses the standard 1280 maximum. PNG transport remains bounded to 16 MiB. No crop, JPEG/WebP, or semantic observation is implemented. The client must update coordinates after geometry changes. A revision protects against compositor geometry changes, **not arbitrary in-app content changes**.
+Observation accepts optional `max_width` (0 defaults to 1280), `max_height` (0 defaults to 1920), and a window-local logical `region` for crop/zoom. Each output bound is at most 1920. The same settings may be supplied under `input_window.observation` with `then: "screenshot"`; they never change input coordinates. Crops use the actual toplevel buffer before resizing and return nonzero transform offsets. PNG transport remains bounded to 16 MiB. No JPEG/WebP or semantic observation is implemented. See [pointer actions and detailed observation](POINTER_CAPTURE.md) for limits, HiDPI mapping, schema compatibility and examples. The client must update coordinates after geometry changes. A revision protects against compositor geometry changes, **not arbitrary in-app content changes**.
 
 ### Batch recovery and action-and-observe
 
-Set `"then": "screenshot"` on `input_window` for an immediate post-batch PNG at the standard capture size. The screenshot runs only after a completed batch and uses a fresh observation check and fresh geometry. Under the existing grant model, control and record grants include observation; observation alone never includes control or recording. There is no new permission bypass.
+Set `"then": "screenshot"` on `input_window` for an immediate post-batch PNG at the default capture size, or customize crop/size using nested `observation` options. The screenshot runs only after a completed batch and uses a fresh observation check and fresh geometry. Under the existing grant model, control and record grants include observation; observation alone never includes control or recording. There is no new permission bypass.
 
 The result metadata is available in both MCP `structuredContent` and a JSON text block, including runtime failures and approval responses. Images are additional content blocks. The result retains `status: completed`, `actions` and `window_id`, with nested `observation` metadata and PNG content. If capture fails or permission has gone away, `observation.status` is `failed` (or `approval_required` with a request ID), but the **input remains completed**. Retry observation, not the batch. This captures immediately; it does not wait for application rendering or promise a settled frame.
 
@@ -116,7 +116,7 @@ Typing and mouse actions borrow the target's **protocol focus**, not desktop act
 
 - An explicit `focus` action **still activates** the permitted window. Omit that action when you want background input. Other actions do not implicitly activate it.
 - The human takes priority: held keys/buttons, seat grabs, input capture, active pointer constraints, input-method grabs, touch focus, or an existing drag-and-drop cause a clear refusal. Unsupported targets never fall back to stealing desktop focus or moving the cursor. A refusal can follow earlier completed actions or characters; re-observe the target before retrying, rather than blindly duplicating a partially typed string.
-- A drag is a bounded 20-step burst with press and release in one callback. Omit `duration_ms` or use `0`; timed drags are rejected before any actions execute. Cross-window drag-and-drop, long holds, durable hover/tooltips, and applications that require foreground activation are not supported by this mode.
+- A straight drag is a bounded 20-step burst; waypoint drags accept 2–64 points with 20 subdivisions per segment (maximum 1261 emitted points). Press and release remain in one callback. Toolkits may compress burst motion; see [path limitations](POINTER_CAPTURE.md). Omit `duration_ms` or use deprecated `0`; timed drags are rejected before any actions execute. Cross-window drag-and-drop, long holds, durable hover/tooltips, and applications that require foreground activation are not supported by this mode.
 - The broker's own virtual US keyboard is identified by its Wayland client process, not by the active physical keyboard. Changing physical layouts is not necessary. The native seat is identified by protocol name, not registry order. Full IME/toolkit compatibility remains unverified.
 - Focus borrowing is available in **guard protocols 2 and 3**. Run `hyprland-computer-use setup` to replace an old/faulted guard and restart an existing broker automatically. Grants are cleared. A loaded seat-owning guard requires a Hyprland restart before replacement; setup refuses hot unloading. An old guard is rejected explicitly; a restoration fault disables further input until setup repairs it.
 

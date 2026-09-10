@@ -423,6 +423,38 @@ public:
       if (wl_resource_get_client(k) == focus->client())
         map(k, baseMap);
   }
+  void pointerModifiers(uint32_t mods) {
+    if (!focus || !focusRaw)
+      throw std::runtime_error("agent_focus_unavailable");
+    for (auto k : keyboards)
+      if (wl_resource_get_client(k) == focus->client())
+        wl_keyboard_send_modifiers(k, nextSerial(), mods, 0, 0, 0);
+  }
+  void scrollAxes(double x, double y, bool steps) {
+    for (auto p : pointers) {
+      if (wl_resource_get_client(p) != focus->client())
+        continue;
+      const auto version = wl_resource_get_version(p);
+      if (version >= 5)
+        wl_pointer_send_axis_source(p, steps
+                                           ? WL_POINTER_AXIS_SOURCE_WHEEL
+                                           : WL_POINTER_AXIS_SOURCE_CONTINUOUS);
+      for (int axis = 0; axis < 2; ++axis) {
+        const double value = axis == 0 ? y : x;
+        if (value == 0)
+          continue;
+        if (steps) {
+          if (version >= 8)
+            wl_pointer_send_axis_value120(p, axis, int32_t(value * 120));
+          else if (version >= 5)
+            wl_pointer_send_axis_discrete(p, axis, int32_t(value));
+        }
+        wl_pointer_send_axis(p, millis(), axis,
+                             wl_fixed_from_double(value * (steps ? 10 : 1)));
+      }
+      frame(p);
+    }
+  }
   void motion(Vector2D local) {
     for (auto p : pointers)
       if (wl_resource_get_client(p) == focus->client()) {

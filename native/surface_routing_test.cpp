@@ -54,6 +54,23 @@ int main() {
               .first); // no implicit popup routing
   auto pop = hitSurfaceTree(nodes, popupNode, {7, 8}, all);
   assert(pop.first == popupChild && (pop.second == Vector2D{2, 3}));
+  auto poly = planSurfacePolyline(nodes, {100, 100},
+                                  {{65, 70}, {85, 90}, {65, 90}}, hit);
+  assert(poly.surface == root && poly.points.size() == 41);
+  assert((poly.points[20] == Vector2D{85, 90}));
+  refused([&] { planSurfacePolyline(nodes, {100, 100}, {{65, 70}}, hit); },
+          "invalid_drag_path_size");
+  refused(
+      [&] {
+        planSurfacePolyline(nodes, {100, 100}, {{65, 70}, {105, 70}}, hit);
+      },
+      "outside_surface");
+  refused(
+      [&] {
+        planSurfacePolyline(nodes, {100, 100}, {{65, 70}, {27, 38}, {65, 90}},
+                            hit);
+      },
+      "cross_surface_drag_unsupported");
   auto path = planSurfacePath(nodes, {100, 100}, {50, 50}, {55, 55}, true, hit);
   assert(path.surface == above && path.points.size() == 21);
   assert((path.points.front() == Vector2D{30, 20}) &&

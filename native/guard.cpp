@@ -75,6 +75,7 @@ static bool locked() {
          g_pSessionLockManager->isSessionLocked();
 }
 #include "input_transaction.hpp"
+#include "pointer_gesture.hpp"
 #include "surface_tree.hpp"
 #include "text_keyboard.hpp"
 #include "text_transaction.hpp"
@@ -144,6 +145,7 @@ static json execute(const json &q, pid_t owner) {
             {"refused_popup_grabs", independentSeat->deniedGrabs()},
 #endif
             {"unicode_text", true},
+            {"pointer_actions_version", 1},
             {"text_chunk_runes", TEXT_CHUNK_RUNES},
             {"surface_tree_version", 1},
             {"input_faulted", inputFaulted},
@@ -289,7 +291,7 @@ static json execute(const json &q, pid_t owner) {
     double toX = q.value("to_x", x), toY = q.value("to_y", y);
     uint32_t button = q.value("button", 272u);
     double delta = q.value("scroll", 0.0);
-    if (!valid(x, y) || !valid(toX, toY))
+    if (!q.contains("path") && (!valid(x, y) || !valid(toX, toY)))
       throw std::runtime_error("outside_window");
     if (button < 272 || button > 274)
       throw std::runtime_error("invalid_button");
@@ -297,50 +299,105 @@ static json execute(const json &q, pid_t owner) {
       throw std::runtime_error("invalid_scroll");
     if (q.value("duration_ms", 0) != 0)
       throw std::runtime_error("timed_drag_unsupported_use_duration_zero");
-    // Validate everything above before sending even a pointer enter.
-    const auto path = planSurfacePath(
-        nodes, size, {x, y}, {toX, toY}, kind == "drag", [&](Vector2D point) {
-          return hitSurfaceTree(
-              nodes, selected, point, [](auto surface, Vector2D local) {
-                return surface->m_current.effectiveInputRegion().containsPoint(
-                    local);
-              });
-        });
+    const uint32_t mods = q.value("mods", 0u);
+    const int clicks = q.value("click_count", 1);
+    if ((mods & ~13u) || clicks < 1 || clicks > 3 ||
+        (kind != "click" && clicks != 1))
+      throw std::runtime_error("invalid_pointer_modifiers_or_click_count");
+    const bool axes = q.contains("scroll_unit") || q.contains("scroll_x") ||
+                      q.contains("scroll_y");
+    const auto unit = q.value("scroll_unit", "");
+    const double dx = q.value("scroll_x", 0.0), dy = q.value("scroll_y", 0.0);
+    const bool steps = unit == "wheel_steps";
+    if (axes) {
+      if (kind != "scroll" || q.contains("scroll") ||
+          (!steps && unit != "logical_pixels"))
+        throw std::runtime_error("invalid_scroll_unit");
+      for (double v : {dx, dy})
+        if (!std::isfinite(v) || std::abs(v) > (steps ? 100 : 1200) ||
+            (steps && std::trunc(v) != v))
+          throw std::runtime_error("invalid_scroll_axis");
+    }
+    auto hit = [&](Vector2D point) {
+      return hitSurfaceTree(
+          nodes, selected, point, [](auto surface, Vector2D local) {
+            return surface->m_current.effectiveInputRegion().containsPoint(
+                local);
+          });
+    };
+    SurfacePath path;
+    if (q.contains("path")) {
+      const auto &values = q.at("path");
+      if (kind != "drag" || !values.is_array() || values.size() < 2 ||
+          values.size() > 64 || q.contains("x") || q.contains("y") ||
+          q.contains("to_x") || q.contains("to_y"))
+        throw std::runtime_error("invalid_drag_path");
+      std::vector<Vector2D> points;
+      for (const auto &point : values) {
+        if (!point.is_object() || point.size() != 2 || !point.contains("x") ||
+            !point.contains("y"))
+          throw std::runtime_error("invalid_drag_point");
+        points.push_back(
+            {point.at("x").get<double>(), point.at("y").get<double>()});
+      }
+      path = planSurfacePolyline(nodes, size, points, hit);
+    } else {
+      path =
+          planSurfacePath(nodes, size, {x, y}, {toX, toY}, kind == "drag", hit);
+    }
+    // All bounds, selectors and gesture parameters checked before any input.
 #ifdef COMPUTER_USE_INDEPENDENT_SEAT
     if (useSeat) {
       independentSeat->begin(token, l.surface.lock(), path.surface,
                              path.points.front());
-      independentSeat->motion(path.points.front());
-      if (kind == "click" || kind == "drag") {
-        independentSeat->button(button, true);
-        if (kind == "drag")
-          for (size_t i = 1; i < path.points.size(); ++i)
-            independentSeat->motion(path.points[i]);
-        independentSeat->button(button, false);
-      } else if (kind == "scroll")
-        independentSeat->scroll(delta);
+      pointerGesture(
+          kind, path.points, button, clicks, mods,
+          [&](uint32_t m) { independentSeat->pointerModifiers(m); },
+          [&](Vector2D p) { independentSeat->motion(p); },
+          [&](uint32_t b, bool down) { independentSeat->button(b, down); },
+          [&] {
+            if (axes)
+              independentSeat->scrollAxes(dx, dy, steps);
+            else
+              independentSeat->scroll(delta);
+          });
     } else
 #endif
     {
       InputTransaction transaction(path.surface, true);
+      if (mods)
+        transaction.borrowKeyboard(agentKeyboard(owner));
       transaction.borrowPointer(path.points.front());
-      transaction.motion(path.points.front());
-      if (kind == "click" || kind == "drag") {
-        transaction.button(button, true);
-        if (kind == "drag") {
-          // Bounded burst, no sleep/dispatch with a button held or focus
-          // borrowed.
-          for (size_t i = 1; i < path.points.size(); ++i)
-            transaction.motion(path.points[i]);
-        }
-        transaction.button(button, false);
-      } else if (kind == "scroll") {
-        g_pSeatManager->sendPointerAxis(
-            millis(), WL_POINTER_AXIS_VERTICAL_SCROLL, delta, 0,
-            (int)(delta * 12), WL_POINTER_AXIS_SOURCE_WHEEL,
-            WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL);
-        g_pSeatManager->sendPointerFrame();
-      }
+      pointerGesture(
+          kind, path.points, button, clicks, mods,
+          [&](uint32_t m) {
+            if (mods)
+              g_pSeatManager->sendKeyboardMods(m, 0, 0, 0);
+          },
+          [&](Vector2D p) { transaction.motion(p); },
+          [&](uint32_t b, bool down) { transaction.button(b, down); },
+          [&] {
+            if (axes) {
+              for (int axis = 0; axis < 2; ++axis) {
+                const double v = axis == 0 ? dy : dx;
+                if (v == 0)
+                  continue;
+                g_pSeatManager->sendPointerAxis(
+                    millis(), wl_pointer_axis(axis), v * (steps ? 10 : 1),
+                    steps ? int32_t(v) : 0, steps ? int32_t(v * 120) : 0,
+                    steps ? WL_POINTER_AXIS_SOURCE_WHEEL
+                          : WL_POINTER_AXIS_SOURCE_CONTINUOUS,
+                    WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL);
+              }
+            } else {
+              // Preserve the old delta contract, including its discrete hint.
+              g_pSeatManager->sendPointerAxis(
+                  millis(), WL_POINTER_AXIS_VERTICAL_SCROLL, delta, 0,
+                  (int)(delta * 12), WL_POINTER_AXIS_SOURCE_WHEEL,
+                  WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL);
+            }
+            g_pSeatManager->sendPointerFrame();
+          });
       transaction.finish();
     }
   } else
