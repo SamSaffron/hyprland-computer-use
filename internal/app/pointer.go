@@ -38,7 +38,7 @@ func pointerModifiers(names []string) (uint32, error) {
 	return mods, nil
 }
 
-// Decode with action-specific presence checks. A missing coordinate is not (0,0).
+// UnmarshalJSON decodes with action-specific presence checks. A missing coordinate is not (0,0).
 func (a *Action) UnmarshalJSON(data []byte) error {
 	type plain Action
 	var v plain
