@@ -144,17 +144,17 @@ func (b *Broker) newMCPServer(clientCtx context.Context, id string, opts *mcp.Se
 		return b.windowStateResult(ctx, a.Window)
 	})
 	type ViewArgs struct {
-		Window   string `json:"window_id" jsonschema:"Instance-bound window ID returned by list_windows"`
-		MaxWidth int    `json:"max_width,omitempty" jsonschema:"0 defaults to 1280; accepted range 0–1920"`
+		Window string `json:"window_id" jsonschema:"Instance-bound window ID returned by list_windows"`
+		CaptureOptions
 	}
-	mcp.AddTool(s, &mcp.Tool{Name: "view_window", Description: "Capture this actual toplevel only, never a desktop crop. Requires observation permission. Returns PNG, actual image dimensions, image-to-window transform, geometry revision, content frame ID and capture completion timestamp. Frame IDs are not input freshness tokens."}, func(ctx context.Context, _ *mcp.CallToolRequest, a ViewArgs) (*mcp.CallToolResult, any, error) {
-		meta, data, err := b.observe(ctx, id, a.Window, a.MaxWidth)
+	mcp.AddTool(s, &mcp.Tool{Name: "view_window", Description: "Capture this actual toplevel only, never a desktop crop. Requires observation permission. Returns PNG, actual image dimensions, image-to-window transform, geometry revision, content frame ID and capture completion timestamp. Optional region crops the full-resolution toplevel before resizing (up to 4x zoom); max_width/max_height preserve aspect ratio. Crop transforms include offsets. Frame IDs are not input freshness tokens."}, func(ctx context.Context, _ *mcp.CallToolRequest, a ViewArgs) (*mcp.CallToolResult, any, error) {
+		meta, data, err := b.observeWithOptions(ctx, id, a.Window, a.CaptureOptions)
 		if err != nil {
 			return nil, nil, err
 		}
 		return resultContent(meta, data, false), nil, nil
 	})
-	mcp.AddTool(s, &mcp.Tool{Name: "input_window", Description: "Perform up to 128 fully prevalidated window-scoped actions with a 60-second execution budget. Unicode text is limited to 262144 UTF-8 bytes per batch and delivered in 48-scalar chunks without clipboard access. Window-local logical coordinates and exact geometry revision required by default. Optional surface_id plus surface_revision from window_state selects surface-local coordinates, including popups. Pointer input hit-tests subsurfaces; crossing surfaces within a drag is refused. Ordinary input restores focus without cursor warp; explicit focus activates. No global fallback. Runtime failures report acknowledged action/character counts; the failed transaction may still have effects, so re-observe before retrying. Optional then=state returns surface/dialog metadata; then=screenshot returns the standard-size permission-checked capture only after a completed batch. Observation failure never means replay the batch."}, func(ctx context.Context, _ *mcp.CallToolRequest, a InputArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(s, &mcp.Tool{Name: "input_window", InputSchema: inputWindowSchema(), Description: "Perform up to 128 fully prevalidated window-scoped actions with a 60-second execution budget. Unicode text is limited to 262144 UTF-8 bytes per batch and delivered in 48-scalar chunks without clipboard access. Window-local logical coordinates and exact geometry revision required by default. Optional surface_id plus surface_revision from window_state selects surface-local coordinates, including popups. Pointer input hit-tests subsurfaces; crossing surfaces within a drag is refused. Ordinary input restores focus without cursor warp; explicit focus activates. No global fallback. Runtime failures report acknowledged action/character counts; the failed transaction may still have effects, so re-observe before retrying. Optional then=state returns surface/dialog metadata; then=screenshot returns a permission-checked capture (optional observation crop/max_width/max_height) only after a completed batch. Observation failure never means replay the batch."}, func(ctx context.Context, _ *mcp.CallToolRequest, a InputArgs) (*mcp.CallToolResult, any, error) {
 		return b.inputTool(ctx, id, a)
 	})
 	tool(s, "record_window", "Start a local, window-only MP4 recording. Separate record permission required. Stops on revoke, expiry, disconnect or 10-minute cap.", func(ctx context.Context, a struct {

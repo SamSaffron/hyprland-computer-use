@@ -40,6 +40,7 @@ Tests and documentation must distinguish automated coverage, live observations, 
 
 The scripts under `scripts/` are **lab harnesses**, not normal user tools:
 
+- `interaction-workbench.py` and `live-pointer-test.py` exercise modifier clicks, two-axis scrolling, multiclicks, raw-motion paths and crop/zoom. Read [the fixture contract and evidence](docs/POINTER_CAPTURE_TESTING.md); evaluator state must never be supplied to a model run.
 - `live-test.py` performs destructive end-to-end checks using a separate local UI connection as the simulated human.
 - `live-sharing-test.py` depends on a fixed disposable desktop layout and external human-input helpers.
 - `mcp-probe.py` exposes a test-only same-user command socket for driving an MCP demo client; it cannot grant approval, but must not be run on a shared or untrusted desktop.

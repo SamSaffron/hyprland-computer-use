@@ -39,11 +39,18 @@ func resultContent(meta any, data []byte, failed bool) *mcp.CallToolResult {
 }
 
 func (b *Broker) observe(ctx context.Context, client, window string, maxWidth int) (map[string]any, []byte, error) {
-	if maxWidth < 0 || maxWidth > 1920 {
-		return nil, nil, errors.New("max_width must be 0–1920")
+	return b.observeWithOptions(ctx, client, window, CaptureOptions{MaxWidth: maxWidth})
+}
+func (b *Broker) observeWithOptions(ctx context.Context, client, window string, options CaptureOptions) (map[string]any, []byte, error) {
+	if err := options.validate(); err != nil {
+		return nil, nil, err
 	}
+
 	w, err := b.backend.window(ctx, window)
 	if err != nil {
+		return nil, nil, err
+	}
+	if _, err := options.bounds(w); err != nil {
 		return nil, nil, err
 	}
 	_, request, err := b.permit(client, "observe", Scope{"window", w.ID}, &w, "View this window")
@@ -53,7 +60,7 @@ func (b *Broker) observe(ctx context.Context, client, window string, maxWidth in
 	if request != "" {
 		return map[string]any{"status": "approval_required", "request_id": request}, nil, nil
 	}
-	data, err := b.backend.capture(ctx, w, maxWidth)
+	data, err := b.backend.captureWithOptions(ctx, w, options)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -70,6 +77,12 @@ func (b *Broker) observe(ctx context.Context, client, window string, maxWidth in
 	meta, err := captureMetadata(current, data, capturedAt)
 	if err != nil {
 		return nil, nil, err
+	}
+	if options.Region != nil {
+		r := *options.Region
+		size := meta["image_size"].([2]int)
+		meta["region"] = r
+		meta["image_to_window"] = map[string]any{"scale_x": float64(r.Width) / float64(size[0]), "scale_y": float64(r.Height) / float64(size[1]), "offset_x": r.X, "offset_y": r.Y}
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
@@ -108,7 +121,11 @@ func (b *Broker) inputTool(ctx context.Context, client string, a InputArgs) (*mc
 		meta["window_state"] = state
 		return resultContent(meta, nil, false), nil, nil
 	}
-	observation, data, err := b.observe(ctx, client, a.Window, 0)
+	options := CaptureOptions{}
+	if a.Observation != nil {
+		options = *a.Observation
+	}
+	observation, data, err := b.observeWithOptions(ctx, client, a.Window, options)
 	if err != nil {
 		// The batch completed: never turn an observation failure into a request to
 		// replay input. Preserve its result and report the observation separately.

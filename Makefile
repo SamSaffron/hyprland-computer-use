@@ -15,7 +15,7 @@ $(BIN):
 $(BIN)/hyprland-computer-use: $(GO_SOURCES) $(wildcard native/*) $(wildcard quickshell/*.qml) Makefile LICENSE THIRD_PARTY.md go.mod go.sum | $(BIN)
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $@ ./cmd/hyprland-computer-use
 native: $(BIN)/guard.so
-$(BIN)/guard.so: native/guard.cpp native/surface_tree.hpp native/surface_routing.hpp native/input_transaction.hpp native/text_transaction.hpp native/text_keymap.hpp native/text_keyboard.hpp | $(BIN)
+$(BIN)/guard.so: native/guard.cpp $(wildcard native/*.hpp) | $(BIN)
 	$(CXX) $(NATIVE_CXXFLAGS) $(CXXFLAGS) -shared -fPIC -fno-gnu-unique $(NATIVE_LDFLAGS) $(LDFLAGS_NATIVE) $$(pkg-config --cflags hyprland libeis-1.0) $< -o $@
 .PHONY: independent-seat
 independent-seat: $(BIN)/guard-seat.so
@@ -36,7 +36,8 @@ fmt-check:
 	fi
 vet:
 	go vet ./...
-native-test: $(BIN)/input-transaction-test $(BIN)/text-keyboard-test $(BIN)/surface-routing-test $(BIN)/seat-policy-test
+native-test: $(BIN)/pointer-gesture-test $(BIN)/input-transaction-test $(BIN)/text-keyboard-test $(BIN)/surface-routing-test $(BIN)/seat-policy-test
+	$(BIN)/pointer-gesture-test
 	$(BIN)/seat-policy-test
 	$(BIN)/input-transaction-test
 	$(BIN)/text-keyboard-test
@@ -58,3 +59,6 @@ test: fmt-check vet native-test
 	go test -race ./...
 clean:
 	rm -rf build
+
+$(BIN)/pointer-gesture-test: native/pointer_gesture_test.cpp native/pointer_gesture.hpp | $(BIN)
+	$(CXX) -std=c++23 -Wall -Wextra -Werror $< -o $@

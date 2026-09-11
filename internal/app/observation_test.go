@@ -41,7 +41,7 @@ func toolMetadata(t *testing.T, r *mcp.CallToolResult) map[string]any {
 	return meta
 }
 func safeStatus() map[string]any {
-	return map[string]any{"ok": true, "version": 2, "focus_preserving": true, "locked": false, "unicode_text": true, "text_chunk_runes": textChunkRunes}
+	return map[string]any{"ok": true, "version": 2, "focus_preserving": true, "locked": false, "unicode_text": true, "pointer_actions_version": 1, "text_chunk_runes": textChunkRunes}
 }
 
 func TestCaptureMetadata(t *testing.T) {
@@ -233,7 +233,7 @@ func TestInvalidThenOptionHasNoEffects(t *testing.T) {
 	}
 }
 
-func TestInputWindowSchemaOmitsCaptureWidth(t *testing.T) {
+func TestInputWindowSchemaIncludesNestedObservation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
@@ -261,8 +261,8 @@ func TestInputWindowSchemaOmitsCaptureWidth(t *testing.T) {
 			found[tool.Name] = string(schema)
 		}
 	}
-	if strings.Contains(found["input_window"], "max_width") {
-		t.Fatalf("input schema exposes unrelated capture sizing: %s", found["input_window"])
+	if !strings.Contains(found["input_window"], "observation") || !strings.Contains(found["input_window"], "max_width") {
+		t.Fatalf("input schema lost nested capture options: %s", found["input_window"])
 	}
 	if !strings.Contains(found["view_window"], "max_width") {
 		t.Fatalf("view schema lost optional capture sizing: %s", found["view_window"])

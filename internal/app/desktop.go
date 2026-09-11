@@ -115,6 +115,7 @@ func (d *Desktop) guard(ctx context.Context, q map[string]any) error {
 		InputFaulted        bool   `json:"input_faulted"`
 		Locked              *bool  `json:"locked"`
 		UnicodeText         bool   `json:"unicode_text"`
+		PointerActions      int    `json:"pointer_actions_version"`
 		TextChunkRunes      int    `json:"text_chunk_runes"`
 		CompletedCharacters *int   `json:"completed_characters"`
 	}
@@ -138,6 +139,9 @@ func (d *Desktop) guard(ctx context.Context, q map[string]any) error {
 	}
 	if !r.OK {
 		return errors.New(r.Error)
+	}
+	if q["pointer_check"] == true && r.PointerActions != 1 {
+		return errors.New("extended_pointer_guard_unavailable: run setup to update the compositor guard")
 	}
 	if q["unicode_check"] == true && (!r.UnicodeText || r.TextChunkRunes != textChunkRunes) {
 		return errors.New("unicode_text_guard_unavailable: run `hyprland-computer-use setup` to update the compositor guard")
@@ -163,19 +167,24 @@ func (d *Desktop) guard(ctx context.Context, q map[string]any) error {
 	return nil
 }
 func (d *Desktop) capture(ctx context.Context, w Window, maxWidth int) ([]byte, error) {
+	return d.captureWithOptions(ctx, w, CaptureOptions{MaxWidth: maxWidth})
+}
+func (d *Desktop) captureWithOptions(ctx context.Context, w Window, o CaptureOptions) ([]byte, error) {
 	if !w.Visible || w.Hidden || w.Size[0] <= 0 || w.Size[1] <= 0 {
 		return nil, errors.New("window_not_visible")
 	}
-	if maxWidth < 0 {
-		return nil, errors.New("max_width must be 0–1920")
+	if _, err := o.bounds(w); err != nil {
+		return nil, err
 	}
-	if maxWidth == 0 {
-		maxWidth = 1280
+	mw, mh := o.limits()
+	scale := math.Min(1, math.Min(float64(mw)/float64(w.Size[0]), float64(mh)/float64(w.Size[1])))
+	if o.Region != nil {
+		if w.Size[0] > 8192 || w.Size[1] > 8192 || int64(w.Size[0])*int64(w.Size[1]) > 16<<20 {
+			return nil, errors.New("window exceeds full-resolution crop budget")
+		}
+		scale = 1
 	}
-	if maxWidth > 1920 {
-		return nil, errors.New("max_width exceeds 1920")
-	}
-	scale := min(1, float64(maxWidth)/float64(w.Size[0]))
+
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	// Sample compositor safety before and after grim. This is not an atomic
@@ -201,28 +210,39 @@ func (d *Desktop) capture(ctx context.Context, w Window, maxWidth int) ([]byte, 
 	if e := d.guard(ctx, map[string]any{"op": "status", "observation_check": true}); e != nil {
 		return nil, e
 	}
+	if o.Region != nil || cfg.Width > mw || cfg.Height > mh {
+		cropped, _, err := cropImage(out, w, o)
+		return cropped, err
+	}
 	return out, nil
 }
 
 type InputArgs struct {
-	Surface         string   `json:"surface_id,omitempty" jsonschema:"Optional instance-bound surface ID from window_state; with surface_revision, coordinates become surface-local. Omit both for window-local root/subsurface hit testing."`
-	SurfaceRevision string   `json:"surface_revision,omitempty" jsonschema:"Exact selected surface geometry revision from window_state; required with surface_id"`
-	Then            string   `json:"then,omitempty" jsonschema:"Omit, screenshot (permission-checked standard-size pixels), or state (surface/dialog metadata) after a completed batch"`
-	Window          string   `json:"window_id" jsonschema:"Window ID returned by list_windows"`
-	Revision        string   `json:"revision" jsonschema:"Exact geometry revision from list_windows or view_window"`
-	Actions         []Action `json:"actions" jsonschema:"Ordered actions, maximum 128; coordinates are window-local logical pixels by default, or selected-surface-local when surface_id is provided"`
+	Observation     *CaptureOptions `json:"observation,omitempty" jsonschema:"Optional post-screenshot crop and sizing; requires then=screenshot. Input coordinates remain logical, never cropped-image coordinates."`
+	Surface         string          `json:"surface_id,omitempty" jsonschema:"Optional instance-bound surface ID from window_state; with surface_revision, coordinates become surface-local. Omit both for window-local root/subsurface hit testing."`
+	SurfaceRevision string          `json:"surface_revision,omitempty" jsonschema:"Exact selected surface geometry revision from window_state; required with surface_id"`
+	Then            string          `json:"then,omitempty" jsonschema:"Omit, screenshot (permission-checked pixels, optional observation crop/sizing), or state (surface/dialog metadata) after a completed batch"`
+	Window          string          `json:"window_id" jsonschema:"Window ID returned by list_windows"`
+	Revision        string          `json:"revision" jsonschema:"Exact geometry revision from list_windows or view_window"`
+	Actions         []Action        `json:"actions" jsonschema:"Ordered actions, maximum 128; coordinates are window-local logical pixels by default, or selected-surface-local when surface_id is provided"`
 }
 type Action struct {
-	Type       string  `json:"type" jsonschema:"focus, move, click, drag, scroll, key, or text"`
-	X          float64 `json:"x,omitempty"`
-	Y          float64 `json:"y,omitempty"`
-	ToX        float64 `json:"to_x,omitempty"`
-	ToY        float64 `json:"to_y,omitempty"`
-	Button     string  `json:"button,omitempty"`
-	Delta      float64 `json:"delta,omitempty"`
-	Key        string  `json:"key,omitempty" jsonschema:"e.g. ENTER, CTRL+L, ALT+LEFT; SUPER/global compositor shortcuts are not supported"`
-	Text       string  `json:"text,omitempty" jsonschema:"UTF-8 Unicode text; LF and TAB act as Return and Tab keys. Other C0/C1 controls including CR are rejected. All text actions combined may contain at most 262144 UTF-8 bytes. Delivered in bounded 48-scalar chunks, not clipboard paste."`
-	DurationMS int     `json:"duration_ms,omitempty" jsonschema:"For drag omit or use 0: focus-preserving drags are bounded atomic paths; timed drags are unsupported"`
+	Modifiers  []string `json:"modifiers,omitempty" jsonschema:"CTRL, SHIFT, ALT held only during this pointer transaction"`
+	ClickCount int      `json:"click_count,omitempty" jsonschema:"Click only: 1 (default), 2 or 3 consecutive clicks in one transaction; no sleeps"`
+	Path       []Point  `json:"path,omitempty" jsonschema:"Drag only: 2–64 points in logical coordinates, one continuous press/release; mutually exclusive with x/y/to_x/to_y"`
+	DeltaX     float64  `json:"delta_x,omitempty"`
+	DeltaY     float64  `json:"delta_y,omitempty"`
+	Unit       string   `json:"unit,omitempty" jsonschema:"wheel_steps (integer +/-100) or logical_pixels (+/-1200), positive right/down; legacy delta remains vertical with original backend semantics"`
+	Type       string   `json:"type" jsonschema:"focus, move, click, drag, scroll, key, or text"`
+	X          float64  `json:"x,omitempty"`
+	Y          float64  `json:"y,omitempty"`
+	ToX        float64  `json:"to_x,omitempty"`
+	ToY        float64  `json:"to_y,omitempty"`
+	Button     string   `json:"button,omitempty"`
+	Delta      float64  `json:"delta,omitempty"`
+	Key        string   `json:"key,omitempty" jsonschema:"e.g. ENTER, CTRL+L, ALT+LEFT; SUPER/global compositor shortcuts are not supported"`
+	Text       string   `json:"text,omitempty" jsonschema:"UTF-8 Unicode text; LF and TAB act as Return and Tab keys. Other C0/C1 controls including CR are rejected. All text actions combined may contain at most 262144 UTF-8 bytes. Delivered in bounded 48-scalar chunks, not clipboard paste."`
+	DurationMS int      `json:"duration_ms,omitempty" jsonschema:"For drag omit or use 0: focus-preserving drags are bounded atomic paths; timed drags are unsupported"`
 }
 
 func keySpec(name string) (uint32, uint32, error) {
@@ -320,6 +340,14 @@ func (e *InputFailure) Unwrap() error { return e.Cause }
 func (b *Broker) input(ctx context.Context, client string, a InputArgs) (map[string]any, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
+	if a.Observation != nil {
+		if a.Then != "screenshot" {
+			return nil, errors.New("observation requires then=screenshot")
+		}
+		if err := a.Observation.validate(); err != nil {
+			return nil, err
+		}
+	}
 	if a.Then != "" && a.Then != "screenshot" && a.Then != "state" {
 		return nil, errors.New("then must be omitted, screenshot, or state")
 	}
@@ -329,6 +357,11 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (map[str
 	w, e := b.backend.window(ctx, a.Window)
 	if e != nil {
 		return nil, e
+	}
+	if a.Observation != nil {
+		if _, err := a.Observation.bounds(w); err != nil {
+			return nil, err
+		}
 	}
 	if w.XWayland {
 		return nil, errors.New("native Wayland window required")
@@ -367,7 +400,12 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (map[str
 	// Validate all actions before any effects.
 	totalTextBytes := 0
 	hasText := false
+	hasExtendedPointer := false
 	for _, ac := range a.Actions {
+		if err := validateExtendedPointer(ac, bounds); err != nil {
+			return nil, err
+		}
+		hasExtendedPointer = hasExtendedPointer || ac.extendedPointer()
 		if a.Surface != "" && ac.Type == "focus" {
 			return nil, errors.New("surface focus action is unsupported; omit surface_id for explicit window activation")
 		}
@@ -411,6 +449,11 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (map[str
 	}
 	b.inputMu.Lock()
 	defer b.inputMu.Unlock()
+	if hasExtendedPointer {
+		if e := b.backend.guard(ctx, map[string]any{"op": "status", "pointer_check": true}); e != nil {
+			return nil, e
+		}
+	}
 	if hasText {
 		if e := b.backend.guard(ctx, map[string]any{"op": "status", "unicode_check": true}); e != nil {
 			return nil, e
@@ -486,6 +529,23 @@ func (b *Broker) input(ctx context.Context, client string, a InputArgs) (map[str
 			}
 			if ac.Type == "scroll" {
 				q["scroll"] = ac.Delta
+				if ac.Unit != "" {
+					delete(q, "scroll")
+					q["scroll_x"], q["scroll_y"], q["scroll_unit"] = ac.DeltaX, ac.DeltaY, ac.Unit
+				}
+			}
+			if len(ac.Modifiers) > 0 {
+				q["mods"], _ = pointerModifiers(ac.Modifiers)
+			}
+			if ac.ClickCount > 0 {
+				q["click_count"] = ac.ClickCount
+			}
+			if len(ac.Path) > 0 {
+				delete(q, "x")
+				delete(q, "y")
+				delete(q, "to_x")
+				delete(q, "to_y")
+				q["path"] = ac.Path
 			}
 			e = send(q)
 		case "key":
