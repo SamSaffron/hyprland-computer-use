@@ -12,6 +12,8 @@ All notable user-visible changes are recorded here. This project follows [Semant
 
 ### Changed
 
+- Add optional `input_window.observation.delay_ms` (0–5000ms, default 0) for cancellable post-action capture, preserving completed-input results on observation failure.
+
 - Add rolling compatibility CI, required QML/XKB/DBus checks and an experimental headless smoke harness.
 - Consolidate compatibility and testing documentation; label the project experimental / alpha.
 

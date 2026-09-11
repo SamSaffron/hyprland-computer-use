@@ -123,7 +123,13 @@ func (b *Broker) inputTool(ctx context.Context, client string, a InputArgs) (*mc
 	}
 	options := CaptureOptions{}
 	if a.Observation != nil {
-		options = *a.Observation
+		options = a.Observation.CaptureOptions
+		// b.input has returned: no input mutex, borrowed focus or synthetic
+		// press is held during this cancellable broker-side wait.
+		if err := waitForObservation(ctx, a.Observation.DelayMS); err != nil {
+			meta["observation"] = map[string]any{"status": "failed", "error": err.Error()}
+			return resultContent(meta, nil, false), nil, nil
+		}
 	}
 	observation, data, err := b.observeWithOptions(ctx, client, a.Window, options)
 	if err != nil {

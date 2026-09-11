@@ -91,7 +91,7 @@ func TestCropRefusalsAndNoInputOnInvalidObservation(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(b.backend.Dir, "frame.png.args")); !os.IsNotExist(err) {
 			t.Fatal("captured before crop prevalidation")
 		}
-		_, err = b.input(context.Background(), "a", InputArgs{Window: "abc", Revision: "20,40,600,800", Then: "screenshot", Observation: &o, Actions: []Action{{Type: "key", Key: "ENTER"}}})
+		_, err = b.input(context.Background(), "a", InputArgs{Window: "abc", Revision: "20,40,600,800", Then: "screenshot", Observation: &PostInputObservationOptions{CaptureOptions: o}, Actions: []Action{{Type: "key", Key: "ENTER"}}})
 		if err == nil || len(calls) != 0 {
 			t.Fatal("invalid observation performed input", o, err)
 		}
@@ -100,7 +100,7 @@ func TestCropRefusalsAndNoInputOnInvalidObservation(t *testing.T) {
 func TestPostActionCrop(t *testing.T) {
 	b, _ := inputTransactionFixture(t, "")
 	fullPNG(t, b)
-	r, _, err := b.inputTool(context.Background(), "a", InputArgs{Window: "abc", Revision: "20,40,600,800", Then: "screenshot", Observation: &CaptureOptions{Region: &CaptureRegion{X: 100, Y: 200, Width: 20, Height: 40}}, Actions: []Action{{Type: "key", Key: "ENTER"}}})
+	r, _, err := b.inputTool(context.Background(), "a", InputArgs{Window: "abc", Revision: "20,40,600,800", Then: "screenshot", Observation: &PostInputObservationOptions{CaptureOptions: CaptureOptions{Region: &CaptureRegion{X: 100, Y: 200, Width: 20, Height: 40}}}, Actions: []Action{{Type: "key", Key: "ENTER"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
