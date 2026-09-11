@@ -218,13 +218,13 @@ func (d *Desktop) captureWithOptions(ctx context.Context, w Window, o CaptureOpt
 }
 
 type InputArgs struct {
-	Observation     *CaptureOptions `json:"observation,omitempty" jsonschema:"Optional post-screenshot crop and sizing; requires then=screenshot. Input coordinates remain logical, never cropped-image coordinates."`
-	Surface         string          `json:"surface_id,omitempty" jsonschema:"Optional instance-bound surface ID from window_state; with surface_revision, coordinates become surface-local. Omit both for window-local root/subsurface hit testing."`
-	SurfaceRevision string          `json:"surface_revision,omitempty" jsonschema:"Exact selected surface geometry revision from window_state; required with surface_id"`
-	Then            string          `json:"then,omitempty" jsonschema:"Omit, screenshot (permission-checked pixels, optional observation crop/sizing), or state (surface/dialog metadata) after a completed batch"`
-	Window          string          `json:"window_id" jsonschema:"Window ID returned by list_windows"`
-	Revision        string          `json:"revision" jsonschema:"Exact geometry revision from list_windows or view_window"`
-	Actions         []Action        `json:"actions" jsonschema:"Ordered actions, maximum 128; coordinates are window-local logical pixels by default, or selected-surface-local when surface_id is provided"`
+	Observation     *PostInputObservationOptions `json:"observation,omitempty" jsonschema:"Optional post-input delay, crop and sizing; requires then=screenshot. Input coordinates remain logical, never cropped-image coordinates."`
+	Surface         string                       `json:"surface_id,omitempty" jsonschema:"Optional instance-bound surface ID from window_state; with surface_revision, coordinates become surface-local. Omit both for window-local root/subsurface hit testing."`
+	SurfaceRevision string                       `json:"surface_revision,omitempty" jsonschema:"Exact selected surface geometry revision from window_state; required with surface_id"`
+	Then            string                       `json:"then,omitempty" jsonschema:"Omit, screenshot (permission-checked pixels, optional observation crop/sizing), or state (surface/dialog metadata) after a completed batch"`
+	Window          string                       `json:"window_id" jsonschema:"Window ID returned by list_windows"`
+	Revision        string                       `json:"revision" jsonschema:"Exact geometry revision from list_windows or view_window"`
+	Actions         []Action                     `json:"actions" jsonschema:"Ordered actions, maximum 128; coordinates are window-local logical pixels by default, or selected-surface-local when surface_id is provided"`
 }
 type Action struct {
 	Modifiers  []string `json:"modifiers,omitempty" jsonschema:"CTRL, SHIFT, ALT held only during this pointer transaction"`

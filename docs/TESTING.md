@@ -62,3 +62,37 @@ commands and assertions for each new support claim. Keep dated run evidence
 outside the user guides. Physical-monitor behavior, real lock-transition capture
 confidentiality, universal toolkit multi-seat behavior and ARM64 desktops remain
 unverified. A protocol delivery acknowledgement does not prove application output.
+
+
+## Post-action observation delay — September 11, 2026
+
+A real **Mousepad 0.7.0 / GTK 3.24.52** editor on the existing pinned
+Hyprland 0.56.2 GPU lab reproduced stale post-input images. The old broker
+returned the previous note in **3/3** scored reproductions, while later
+captures showed the replacement text. The application had no injected sleeps,
+mock UI or modified rendering behavior.
+
+The delay candidate was then tested with **10 paired trials**, alternating
+0ms/200ms order, after two warmup pairs. Both arms ran on the same broker and
+compositor, with identical Ctrl+A + text actions, note content, geometry and
+capture settings. Only `observation.delay_ms` varied. OCR of the actual returned
+PNG and a later MCP-captured reference gave:
+
+| Observation | Returned screenshot contains complete new note | Later reference correct | Median input-and-capture time |
+|---|---|---|---|
+| Default 0ms | 2/10 | 10/10 | 98ms |
+| Explicit 200ms | 10/10 | 10/10 | 299ms |
+
+This demonstrates improved returned-frame freshness for this workflow, **not**
+a general 200ms rendering guarantee or a model task-success benchmark. Fresh
+screenshots cost approximately the requested 200ms here. Earlier synthetic
+native-versus-MCP pilot results are not included.
+
+Reproduce with `scripts/live-observation-delay-test.py` in an explicitly
+disposable session; [the recipe](OBSERVATION_DELAY.md#real-application-test)
+includes separate OCR scoring. Raw screenshots, MCP traces and build provenance
+are retained as private evaluation artifacts, not checked into the repository.
+Unit/race coverage includes delay bounds and prevalidation, cancellation and
+deadlines, input-lock release, pause/revocation/window-close/lock refusal,
+fresh post-wait geometry, no wait on failed input, unchanged standalone capture,
+and MCP result serialization.

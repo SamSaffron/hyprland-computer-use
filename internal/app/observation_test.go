@@ -264,6 +264,9 @@ func TestInputWindowSchemaIncludesNestedObservation(t *testing.T) {
 	if !strings.Contains(found["input_window"], "observation") || !strings.Contains(found["input_window"], "max_width") {
 		t.Fatalf("input schema lost nested capture options: %s", found["input_window"])
 	}
+	if strings.Contains(found["view_window"], "delay_ms") {
+		t.Fatal("post-input delay leaked into standalone capture schema")
+	}
 	if !strings.Contains(found["view_window"], "max_width") {
 		t.Fatalf("view schema lost optional capture sizing: %s", found["view_window"])
 	}
@@ -272,7 +275,7 @@ func TestInputWindowSchemaIncludesNestedObservation(t *testing.T) {
 // Exercise actual SDK serialization, not just handler return values: metadata
 // must remain available in structuredContent as well as JSON text.
 func TestObservationMCPWireContract(t *testing.T) {
-	for _, name := range []string{"view", "approval", "plain_input", "then", "then_failed", "partial", "then_approval"} {
+	for _, name := range []string{"view", "approval", "plain_input", "then", "then_delay", "then_failed", "partial", "then_approval"} {
 		t.Run(name, func(t *testing.T) {
 			var broker atomic.Pointer[Broker]
 			b, _ := transactionFixture(t, func(q map[string]any) map[string]any {
@@ -317,6 +320,9 @@ func TestObservationMCPWireContract(t *testing.T) {
 			}
 			if strings.HasPrefix(name, "then") {
 				args["then"] = "screenshot"
+				if name == "then_delay" {
+					args["observation"] = map[string]any{"delay_ms": 20}
+				}
 			}
 			result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: args})
 			if err != nil {
@@ -344,13 +350,13 @@ func TestObservationMCPWireContract(t *testing.T) {
 				if structured["status"] != "completed" {
 					t.Fatal(structured)
 				}
-				want := map[string]string{"then": "ok", "then_failed": "failed", "then_approval": "approval_required"}[name]
+				want := map[string]string{"then": "ok", "then_delay": "ok", "then_failed": "failed", "then_approval": "approval_required"}[name]
 				if structured["observation"].(map[string]any)["status"] != want {
 					t.Fatal(structured)
 				}
 			}
 			wantBlocks := 1
-			if name == "view" || name == "then" {
+			if name == "view" || name == "then" || name == "then_delay" {
 				wantBlocks = 2
 			}
 			if len(result.Content) != wantBlocks {

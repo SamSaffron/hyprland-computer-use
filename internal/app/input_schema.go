@@ -68,5 +68,8 @@ func inputWindowSchema() any {
 	props := root["properties"].(map[string]any)
 	props["actions"] = map[string]any{"type": "array", "items": map[string]any{"anyOf": variants}, "minItems": 1, "maxItems": 128, "description": "Ordered, prevalidated actions in window-local logical coordinates (or selected surface-local)."}
 	props["then"] = enum("", "state", "screenshot")
+	observation := props["observation"].(map[string]any)["properties"].(map[string]any)
+	delay := observation["delay_ms"].(map[string]any)
+	delay["minimum"], delay["maximum"] = 0, maxObservationDelayMS
 	return root
 }
