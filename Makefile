@@ -6,6 +6,9 @@ APP_PACKAGE := github.com/samsaffron/hyprland-computer-use/internal/app
 LDFLAGS = -s -w -X $(APP_PACKAGE).Version=$(VERSION) -X $(APP_PACKAGE).Commit=$(COMMIT) -X $(APP_PACKAGE).Date=$(BUILD_DATE)
 NATIVE_CXXFLAGS := -std=c++23 -O2 -Wall -Wextra -fstack-protector-strong -D_FORTIFY_SOURCE=2
 NATIVE_LDFLAGS := -Wl,-z,relro,-z,now
+# Treat dependency headers as system headers, preserving warnings in our sources.
+# Keep this lazy so Go-only builds do not require native development packages.
+native_cflags = $(patsubst -I%,-isystem %,$(shell pkg-config --cflags $(1)))
 GO_SOURCES := $(shell find . -type d \( -name .git -o -name build -o -name dist \) -prune -o -type f -name '*.go' -print)
 .PHONY: all native setup-native native-build-check fmt fmt-check vet native-test test clean
 all: $(BIN)/hyprland-computer-use native
@@ -15,17 +18,17 @@ $(BIN):
 $(BIN)/hyprland-computer-use: $(GO_SOURCES) $(wildcard native/*) $(wildcard quickshell/*.qml) Makefile LICENSE THIRD_PARTY.md go.mod go.sum | $(BIN)
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $@ ./cmd/hyprland-computer-use
 native: $(BIN)/guard.so
-$(BIN)/guard.so: native/guard.cpp $(wildcard native/*.hpp) | $(BIN)
-	$(CXX) $(NATIVE_CXXFLAGS) $(CXXFLAGS) -shared -fPIC -fno-gnu-unique $(NATIVE_LDFLAGS) $(LDFLAGS_NATIVE) $$(pkg-config --cflags hyprland libeis-1.0) $< -o $@
+$(BIN)/guard.so: native/guard.cpp $(wildcard native/*.hpp) Makefile | $(BIN)
+	$(CXX) $(NATIVE_CXXFLAGS) $(CXXFLAGS) -shared -fPIC -fno-gnu-unique $(NATIVE_LDFLAGS) $(LDFLAGS_NATIVE) $(call native_cflags,hyprland libeis-1.0) $< -o $@
 .PHONY: independent-seat
 independent-seat: $(BIN)/guard-seat.so
-$(BIN)/guard-seat.so: native/guard.cpp $(wildcard native/*.hpp) | $(BIN)
-	$(CXX) $(NATIVE_CXXFLAGS) $(CXXFLAGS) -shared -fPIC -fno-gnu-unique $(NATIVE_LDFLAGS) $(LDFLAGS_NATIVE) -DCOMPUTER_USE_INDEPENDENT_SEAT $$(pkg-config --cflags hyprland libeis-1.0) $< -o $@ $$(pkg-config --libs wayland-server xkbcommon)
+$(BIN)/guard-seat.so: native/guard.cpp $(wildcard native/*.hpp) Makefile | $(BIN)
+	$(CXX) $(NATIVE_CXXFLAGS) $(CXXFLAGS) -shared -fPIC -fno-gnu-unique $(NATIVE_LDFLAGS) $(LDFLAGS_NATIVE) -DCOMPUTER_USE_INDEPENDENT_SEAT $(call native_cflags,hyprland libeis-1.0) $< -o $@ $$(pkg-config --libs wayland-server xkbcommon)
 setup-native: native $(BIN)/header-version $(BIN)/setup-inspector.so
-$(BIN)/setup-inspector.so: native/setup_inspector.cpp native/popup_hook.hpp | $(BIN)
-	$(CXX) $(NATIVE_CXXFLAGS) $(CXXFLAGS) -shared -fPIC -fno-gnu-unique $(NATIVE_LDFLAGS) $(LDFLAGS_NATIVE) $$(pkg-config --cflags hyprland) $< -o $@
-$(BIN)/header-version: native/version.cpp | $(BIN)
-	$(CXX) $$(pkg-config --cflags hyprland) $< -o $@
+$(BIN)/setup-inspector.so: native/setup_inspector.cpp native/popup_hook.hpp Makefile | $(BIN)
+	$(CXX) $(NATIVE_CXXFLAGS) $(CXXFLAGS) -shared -fPIC -fno-gnu-unique $(NATIVE_LDFLAGS) $(LDFLAGS_NATIVE) $(call native_cflags,hyprland) $< -o $@
+$(BIN)/header-version: native/version.cpp Makefile | $(BIN)
+	$(CXX) $(call native_cflags,hyprland) $< -o $@
 
 fmt:
 	go fmt ./...
@@ -51,8 +54,8 @@ $(BIN)/text-keyboard-test: native/text_keyboard_test.cpp native/text_keymap.hpp 
 .PHONY: native-text-wire-test
 native-text-wire-test: $(BIN)/text-keyboard-wire-test
 	$(BIN)/text-keyboard-wire-test
-$(BIN)/text-keyboard-wire-test: native/text_keyboard_test.cpp native/text_keymap.hpp native/text_keyboard.hpp | $(BIN)
-	$(CXX) -std=c++23 -Wall -Wextra -Werror -DTEXT_TEST_WAYLAND $$(pkg-config --cflags wayland-server) $< -o $@ $$(pkg-config --libs wayland-server)
+$(BIN)/text-keyboard-wire-test: native/text_keyboard_test.cpp native/text_keymap.hpp native/text_keyboard.hpp Makefile | $(BIN)
+	$(CXX) -std=c++23 -Wall -Wextra -Werror -DTEXT_TEST_WAYLAND $(call native_cflags,wayland-server) $< -o $@ $$(pkg-config --libs wayland-server)
 $(BIN)/input-transaction-test: native/input_transaction_test.cpp native/input_transaction.hpp native/text_transaction.hpp native/text_keymap.hpp native/text_keyboard.hpp | $(BIN)
 	$(CXX) -std=c++23 -Wall -Wextra -Werror $< -o $@
 test: fmt-check vet native-test
